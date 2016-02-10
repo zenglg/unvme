@@ -1,0 +1,15 @@
+PROJECT_NAME            = "User-space NVME Driver"
+INPUT                   = . ../src
+FILE_PATTERNS           = *.dox *.h *.c
+EXCLUDE_PATTERNS        = *.mod.c
+MACRO_EXPANSION         = NO
+BRIEF_MEMBER_DESC       = YES
+EXTRACT_STATIC          = YES
+SORT_MEMBER_DOCS        = YES
+GENERATE_TREEVIEW       = YES
+GENERATE_HTML           = YES
+GENERATE_LATEX          = NO
+CALL_GRAPH              = YES
+INCLUDE_GRAPH           = YES
+INCLUDED_BY_GRAPH       = NO
+DIRECTORY_GRAPH         = NO

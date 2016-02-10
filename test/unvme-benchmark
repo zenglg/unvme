@@ -1,0 +1,146 @@
+#!/bin/bash
+# This benchmark test supports 3 different drivers:  NVMe, UNVMe, and SPDK.
+# It detects the specified device name and determine which fio engine to use.
+#
+# Usage examples:
+#   % unvme-benchmark /dev/nvme0n1
+#   % unvme-benchmark /dev/vfio/20
+#   % unvme-benchmark spdk/05:00.0
+
+PROG=$(basename $0)
+USAGE="Usage: ${PROG} devname"
+
+cd $(dirname $0)
+: ${OUTDIR=${PWD}/out}
+
+FIOTEXT="[global]
+thread=1
+group_reporting=1
+direct=1
+verify=0
+ioengine=IOENGINE
+time_based=1
+ramp_time=RAMPTIME
+runtime=RUNTIME
+bs=BLOCKSIZE
+filename=FILENAME
+NSID
+
+[test]
+rw=RW
+numjobs=QCOUNT
+iodepth=QDEPTH"
+
+: ${RW="randread randwrite"}
+: ${QCOUNT="01 04 08 16"}
+: ${QDEPTH="0001 0004 0008 0016 0032 0064"}
+: ${RAMPTIME=120}
+: ${RUNTIME=300}
+: ${BLOCKSIZE=4096}
+: ${IOENGINE=""}
+
+if [ $# -lt 1 ]; then echo ${USAGE}; exit 1; fi
+
+for i in $@; do
+    case $i in
+    /dev/nvme*)
+        if [ ! -b $i ]; then
+            echo "Unknown NVMe device: $i"
+            exit 1
+        fi
+        if [ -z ${IOENGINE} ]; then
+            IOENGINE=libaio
+        fi
+        FILENAME=$i
+        DRIVER="nvme"
+        ;;
+
+    /dev/vfio/*)
+        if [ ! -c $i ]; then
+            echo "Unknown vfio device: $i"
+            exit 1
+        fi
+        if [ -z ${IOENGINE} ]; then
+            IOENGINE=../ioengine/unvme_fio
+        fi
+        FILENAME=$i
+        DRIVER="unvme"
+        NSID="nsid=1"
+        ;;
+
+    spdk/*:*.*)
+        IOENGINE=../ioengine/spdk_fio
+        DRIVER="spdk"
+        NSID="nsid=1"
+        pci=$(basename $i)
+        if [ -z "$(lspci | grep ^${pci} | grep 'Non-Volatile')" ]; then
+            echo "No SSD at PCI ${pci}"
+            exit 1
+        fi
+        FILENAME=$(echo ${pci} | tr : .)
+        shift
+        ;;
+
+    *)
+        echo ${USAGE}
+        exit 1
+        ;;
+    esac
+done
+
+mkdir -p ${OUTDIR}
+
+
+#
+# Echo and execute a command.
+#
+cmd() {
+    echo "# $* ($(date '+%a %D %r'))"
+    eval $*
+    if [ $? -ne 0 ]; then exit 1; fi
+    echo
+    #read -p "Press <Enter> to continue..."
+}
+
+
+#
+# Start test.
+#
+for rw in ${RW}; do
+    for qc in ${QCOUNT}; do
+        for qd in ${QDEPTH}; do
+            OUTNAME=${OUTDIR}/${DRIVER}-${rw}-${qc}-${qd}
+            OUTFILE=${OUTNAME}.out
+            FIOFILE=${OUTNAME}.fio
+
+            if [ -e ${OUTFILE} ]; then
+                if [ -n "$(grep maxt= ${OUTFILE})" ]; then
+                    echo "Skip existing ${OUTFILE}"
+                    continue
+                else
+                    cmd rm -f ${OUTFILE}
+                fi
+            fi
+
+            echo "${FIOTEXT}" | sed -e "s?IOENGINE?${IOENGINE}?g;s?RAMPTIME?${RAMPTIME}?g;s?RUNTIME?${RUNTIME}?g;s?BLOCKSIZE?${BLOCKSIZE}?g;s?NSID?${NSID}?g;s?FILENAME?${FILENAME}?g;s?RW?${rw}?g;s?QCOUNT?${qc}?g;s?QDEPTH?${qd}?g" > ${FIOFILE}
+
+            echo "========"
+            cmd cat ${FIOFILE} | tee -a ${OUTFILE}
+            echo -e "\n========\n" >> ${OUTFILE}
+            cmd /usr/bin/free -h | tee -a ${OUTFILE}
+            echo -e "\n========\n" >> ${OUTFILE}
+
+            cmd ../fio/fio ${FIOFILE} 2>&1 | tee -a ${OUTFILE}
+
+            if [ -n "$(grep maxt= ${OUTFILE})" ]; then
+                echo -e "\n========\n" >> ${OUTFILE}
+                cmd /usr/bin/free -h | tee -a ${OUTFILE}
+                rm ${FIOFILE}
+            else
+                echo "### ${PROG} terminated on error ###"
+                exit 1
+            fi
+        done
+    done
+done
+

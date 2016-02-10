@@ -1,0 +1,102 @@
+#!/bin/bash
+# Set up and bind NVME device to use with vfio driver.
+
+PROG=$(basename "$0")
+
+USAGE="Usage:  ${PROG} [reset]"
+
+trap 'exit 1' TERM
+export EXIT_PID=$$
+
+
+#
+# function: print usage and exit
+#
+myusage() {
+    echo -e "${USAGE}"
+    exit 1
+}
+
+#
+# function: print error and exit
+#
+myerror() {
+    echo "ERROR: $*"
+    kill -s TERM ${EXIT_PID}
+    exit 1
+}
+
+# 
+# function: echo and execute command, and exit on error
+#
+mycmd() {
+    #echo -e "$(date +%T)> $*"
+    eval $*
+    if [ $? -ne 0 ]; then myerror "EXIT"; fi
+    sleep 1
+}
+
+#
+# Start here.
+#
+if [ $# -eq 0 ]; then
+    echo "# Setup NVMe devices for UNVMe user space driver"
+
+    if [ -z "$(ls /sys/kernel/iommu_groups)" ]; then
+        echo "/sys/kernel/iommu_groups is empty"
+        echo "ERROR: UNVMe requires vfio with IOMMU and VT-d enabled"
+        exit 1
+    fi
+
+    NVME_SLOTS=$(lspci | grep 'Non-Volatile' | awk '{print $1}')
+    if [ -z "${NVME_SLOTS}" ]; then
+        echo "NVME device not found in system"
+        exit 1
+    fi
+
+    #lspci -nn | grep 'Non-Volatile'
+    #echo
+
+    if [ "$(lsmod | grep '^vfio_pci ')" ]; then
+        for i in $(find /sys/bus/pci/drivers/vfio-pci -lname '*/devices/*'); do
+            mycmd "echo $(basename $i) > /sys/bus/pci/drivers/vfio-pci/unbind"
+        done
+    fi
+    mycmd modprobe vfio-pci
+
+    for i in ${NVME_SLOTS}; do
+        NVME_DEV=$(find /sys/bus/pci/devices -name "*$i" -printf %f)
+        if [ -e /sys/bus/pci/devices/${NVME_DEV}/driver/unbind ]; then
+            mycmd "echo ${NVME_DEV} > /sys/bus/pci/devices/${NVME_DEV}/driver/unbind"
+        fi
+        NVME_VPID=$(lspci -n -s $i | cut -d' ' -f3 | sed 's/:/ /')
+        mycmd "echo ${NVME_VPID} > /sys/bus/pci/drivers/vfio-pci/new_id"
+    done
+
+    echo
+    for i in ${NVME_SLOTS}; do
+        VFIO_DEV=$(find /sys/kernel/iommu_groups -name \*\:$i | cut -d/ -f5)
+        if [ -c /dev/vfio/${VFIO_DEV} ]; then
+            SSD=$(lspci -vs $i | grep Subsystem | sed 's/.*: //')
+            echo "Use /dev/vfio/${VFIO_DEV} for pci $i (${SSD})"
+        fi
+    done
+
+elif [ "$1" == "reset" ]; then
+    echo "# Reset NVMe devices to inbox kernel driver"
+
+    if [ "$(lsmod | grep '^vfio_pci ')" ]; then
+        for i in $(find /sys/bus/pci/drivers/vfio-pci -lname '*/devices/*'); do
+            mycmd "echo $(basename $i) > /sys/bus/pci/drivers/vfio-pci/unbind"
+        done
+    fi
+
+    mycmd "modprobe -r nvme"
+    mycmd "modprobe nvme"
+    sleep 3
+    echo
+    ls -1 /dev/nvme*
+else
+    myusage
+fi
+
