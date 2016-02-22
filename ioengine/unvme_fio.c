@@ -75,21 +75,6 @@ static int do_unvme_init(const char* vfioname, struct thread_data *td)
 }
 
 /*
- * UNVMe clean up.
- */
-static void do_unvme_cleanup(void)
-{
-    pthread_mutex_lock(&unvme.mutex);
-    unvme.active--;
-    if (unvme.active == 0 && unvme.ns) {
-        DEBUG("%s unvme_close", __func__);
-        unvme_close(unvme.ns);
-        unvme.ns = NULL;
-    }
-    pthread_mutex_unlock(&unvme.mutex);
-}
-
-/*
  * The ->event() hook is called to match an event number with an io_u.
  * After the core has called ->getevents() and it has returned eg 3,
  * the ->event() hook must return the 3 events that have completed for
@@ -102,8 +87,10 @@ static struct io_u* fio_unvme_event(struct thread_data *td, int event)
 
     if (udata->head != udata->tail) {
         io_u = udata->iocq[udata->head];
+        TDEBUG("GET %d page=%d lba=%#lx", udata->head,
+               ((unvme_page_t*)io_u->engine_data)->id,
+               ((unvme_page_t*)io_u->engine_data)->slba);
         if (++udata->head > td->o.iodepth) udata->head = 0;
-        TDEBUG("GET iou=%p head=%d", io_u, udata->head);
     }
     return io_u;
 }
@@ -132,11 +119,9 @@ static int fio_unvme_getevents(struct thread_data *td, unsigned int min,
 
         if (page) {
             udata->iocq[udata->tail] = page->data;
+            TDEBUG("PUT %d page=%d lba=%#lx", udata->tail, page->id, page->slba);
             if (++udata->tail > td->o.iodepth) udata->tail = 0;
-            events++;
-            TDEBUG("PUT iou=%p tail=%d page=%d lba=%ld events=%d",
-                   page->data, udata->tail, page->id, page->slba, events);
-            if (events >= min) break;
+            if (++events >= min) break;
         } else if (t) {
             clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
             uint64_t elapse = ((t1.tv_sec - t0.tv_sec) * 1000000000L)
@@ -172,14 +157,12 @@ static int fio_unvme_queue(struct thread_data *td, struct io_u *io_u)
 
     switch (io_u->ddir) {
     case DDIR_READ:
-        TDEBUG("READ iou=%p page=%d lba=%ld n=%d",
-               io_u, page->id, page->slba, page->nlb);
+        TDEBUG("READ page=%d lba=%#lx", page->id, page->slba);
         ret = unvme_aread(unvme.ns, page);
         break;
 
     case DDIR_WRITE:
-        TDEBUG("WRITE iou=%p page=%d lba=%ld n=%d",
-               io_u, page->id, page->slba, page->nlb);
+        TDEBUG("WRITE page=%d lba=%#lx", page->id, page->slba);
         ret = unvme_awrite(unvme.ns, page);
         break;
 
@@ -241,13 +224,19 @@ static int fio_unvme_init(struct thread_data *td)
 static void fio_unvme_cleanup(struct thread_data *td)
 {
     unvme_data_t* udata = td->io_ops->data;
-
-    TDEBUG("active=%d", unvme.active);
     if (udata) {
         if (udata->iocq) free(udata->iocq);
         free(udata);
-        do_unvme_cleanup();
     }
+
+    pthread_mutex_lock(&unvme.mutex);
+    TDEBUG("active=%d", unvme.active);
+    if (--unvme.active == 0 && unvme.ns) {
+        DEBUG("%s unvme_close", __func__);
+        unvme_close(unvme.ns);
+        unvme.ns = NULL;
+    }
+    pthread_mutex_unlock(&unvme.mutex);
 }
 
 /*
@@ -265,10 +254,16 @@ static int fio_unvme_io_u_init(struct thread_data *td, struct io_u *io_u)
 
     np = ((np + unvme.ns->pagesize - 1) & ~(unvme.ns->pagesize - 1));
     np /= unvme.ns->pagesize;
-    if (np > unvme.ns->maxppio) return 1;
+    if (np > unvme.ns->maxppio) {
+        error(0, 0, "%s np %d > %d", __func__, np, unvme.ns->maxppio);
+        return 1;
+    }
 
     unvme_page_t* page = unvme_alloc(unvme.ns, td->thread_number - 1, np);
-    if (!page) return 1;
+    if (!page) {
+        error(0, 0, "%s unvme_alloc", __func__);
+        return 1;
+    }
     page->data = io_u;
     io_u->engine_data = page;
     TDEBUG("page=%d", page->id);
@@ -302,7 +297,10 @@ static int fio_unvme_get_file_size(struct thread_data *td, struct fio_file *f)
 {
     TDEBUG("file=%s", f->file_name);
     if (!fio_file_size_known(f)) {
-        if (do_unvme_init(f->file_name, td)) return 1;
+        if (do_unvme_init(f->file_name, td)) {
+            error(0, 0, "%s do_unvme_init", __func__);
+            return 1;
+        }
         f->real_file_size = unvme.ns->blockcount * unvme.ns->blocksize;
         fio_file_set_size_known(f);
     }

@@ -35,7 +35,7 @@ SHELL := /bin/sh
 DEFAULT_MODEL ?= model_apc
 
 # Set the default optimization flag
-COPT ?= -O2
+COPT ?= -O3
 
 # To turn on lots of debug messages
 #CPPFLAGS += -DUNVME_DEBUG

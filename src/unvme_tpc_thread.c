@@ -46,21 +46,27 @@ extern sem_t unvme_sem;
  */
 void* unvme_tpc_thread(void* arg)
 {
-    unvme_queue_t* ioq = arg;
-    unvme_datapool_t* datapool = &ioq->datapool;
+    unvme_session_t* ses = arg;
+    unvme_device_t* dev = ses->dev;
+    unvme_queue_t* ioqs = ses->queues;
+    int qcount = ses->qcount;
+    int toqid = ioqs[qcount-1].nvq->id;
 
-    INFO_FN("start q=%d", ioq->nvq->id);
+    INFO_FN("%d: start q=%d-%d", dev->vfiodev->id, ses->id, toqid);
     sem_post(&unvme_sem);
 
-    while (sem_wait(&ioq->tpc.sem) == 0) {
+    while (sem_wait(&ses->tpc.sem) == 0) {
         int cid, stat;
-        while ((cid = nvme_check_completion(ioq->nvq, &stat)) < 0) {
-            if (ioq->tpc.stop) goto end;
-        };
+        int i = 0;
+        for (;;) {
+            if (ses->tpc.stop) goto end;
+            cid = nvme_check_completion(ioqs[i].nvq, &stat);
+            if (cid >= 0) break;
+            if (++i == qcount) i = 0;
+        }
+        unvme_datapool_t* datapool = &ioqs[i].datapool;
         datapool->piostat[cid].cstat = stat;
         datapool->piostat[cid].ustat = UNVME_PS_READY;
-
-        // add to the client completion polling queue
         unvme_piocpq_t* cpq = datapool->piocpq;
         cpq->pa[cpq->tail] = datapool->piostat[cid].cpa;
         if (++cpq->tail == cpq->size) cpq->tail = 0;
@@ -68,18 +74,18 @@ void* unvme_tpc_thread(void* arg)
     }
 
 end:
-    INFO_FN("end q=%d", ioq->nvq->id);
+    INFO_FN("%d: end q=%d-%d", dev->vfiodev->id, ses->id, toqid);
     return 0;
 }
 
 /**
  * Create thread process completion data.
- * @param   ioq         io queue
+ * @param   ses         session
  */
-void unvme_tpc_create(unvme_queue_t* ioq)
+void unvme_tpc_create(unvme_session_t* ses)
 {
-    if (sem_init(&ioq->tpc.sem, 0, 0)) FATAL("sem_init");
-    if (pthread_create(&ioq->tpc.thread, 0, unvme_tpc_thread, ioq)) {
+    if (sem_init(&ses->tpc.sem, 0, 0)) FATAL("sem_init");
+    if (pthread_create(&ses->tpc.thread, 0, unvme_tpc_thread, ses)) {
         FATAL("pthread_create");
     }
     sem_wait(&unvme_sem);
@@ -87,15 +93,15 @@ void unvme_tpc_create(unvme_queue_t* ioq)
 
 /**
  * Delete thread process completion data.
- * @param   ioq         io queue
+ * @param   ses         session
  */
-void unvme_tpc_delete(unvme_queue_t* ioq)
+void unvme_tpc_delete(unvme_session_t* ses)
 {
-    if (ioq->tpc.thread) {
-        ioq->tpc.stop = 1;
-        sem_post(&ioq->tpc.sem);
-        pthread_join(ioq->tpc.thread, 0);
-        sem_destroy(&ioq->tpc.sem);
+    if (ses->tpc.thread) {
+        ses->tpc.stop = 1;
+        sem_post(&ses->tpc.sem);
+        pthread_join(ses->tpc.thread, 0);
+        sem_destroy(&ses->tpc.sem);
     }
 }
 

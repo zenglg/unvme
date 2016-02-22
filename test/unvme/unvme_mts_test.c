@@ -57,9 +57,9 @@
 // Global variables
 static char* vfioname;      ///< vfio device name
 static int nsid = 1;        ///< namespace id
-static int numses = 7;      ///< number of thread sessions
-static int qcount = 4;      ///< number of queues to create
-static int qsize = 256;     ///< queue size
+static int numses = 14;     ///< number of thread sessions
+static int qcount = 2;      ///< number of queues to create
+static int qsize = 64;      ///< queue size
 static int minbpio = 1;     ///< minimum number of blocks per IO
 static int maxbpio = 0;     ///< maximum number of blocks per IO
 static int loop = 1;        ///< test loop count
@@ -188,7 +188,7 @@ next:
             }
 
             // free all pages in a queue
-            if (unvme_free(ns, pages)) ERROR("unvme_free %d", tid);
+            if (unvme_free(ns, pages)) ERROR("unvme_free %d %d", tid, q);
         }
     }
 
@@ -206,9 +206,9 @@ int main(int argc, char* argv[])
     const char* usage =
 "Usage: %s [OPTION]... vfioname\n\
          -n       nsid (default to 1)\n\
-         -t       number of thread sessions (default 7)\n\
-         -q       number of IO queues per thread (default 4)\n\
-         -d       each IO queue size (default 256)\n\
+         -t       number of thread sessions (default 14)\n\
+         -q       number of IO queues per thread (default 2)\n\
+         -d       each IO queue size (default 64)\n\
          -m       minimum IO blockcount (default 1)\n\
          -x       maximum IO blockcount (depends on block size)\n\
          -l       number of test loop iterations\n\

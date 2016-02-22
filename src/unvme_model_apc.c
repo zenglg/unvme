@@ -41,22 +41,6 @@ int unvme_model = UNVME_MODEL_APC;
 
 
 /**
- * Create IO queue model extended function.
- * @param   ioq         io queue
- */
-void unvme_ioq_create_ext(unvme_queue_t* ioq)
-{
-}
-
-/**
- * Delete IO queue model extended function.
- * @param   ioq         io queue
- */
-void unvme_ioq_delete_ext(unvme_queue_t* ioq)
-{
-}
-
-/**
  * Find and remove a page from the page IO completion queue.
  * @param   piocpq      page IO completion queue
  * @param   id          page id
@@ -71,12 +55,11 @@ static unvme_page_t* unvme_cpq_get(unvme_piocpq_t* piocpq, int id)
             unvme_page_t* page = piocpq->pa[h];
             if (h != piocpq->head) piocpq->pa[h] = piocpq->pa[piocpq->head];
             if (++piocpq->head == piocpq->size) piocpq->head = 0;
-            atomic_sub(&piocpq->count, 1);
+            piocpq->count--;
             return page;
         }
         if (++h == piocpq->size) h = 0;
     }
-    //DEBUG_FN("cid %d not found (%d)", id, piocpq->count);
     return NULL;
 }
 
@@ -117,7 +100,7 @@ static unvme_page_t* unvme_check_cq(unvme_queue_t* ioq)
  */
 unvme_page_t* unvme_poll(const unvme_ns_t* ns, unvme_page_t* pa, int sec)
 {
-    unvme_queue_t* q = ((client_session_t*)(ns->ses))->queues[pa->qid].ioq;
+    unvme_queue_t* q = ((unvme_session_t*)(ns->ses))->queues + pa->qid;
     unvme_piocpq_t* piocpq = q->datapool.piocpq;
     int cid = pa->id;
 
@@ -159,7 +142,7 @@ unvme_page_t* unvme_poll(const unvme_ns_t* ns, unvme_page_t* pa, int sec)
  */
 unvme_page_t* unvme_apoll(const unvme_ns_t* ns, int qid, int sec)
 {
-    unvme_queue_t* q = ((client_session_t*)(ns->ses))->queues[qid].ioq;
+    unvme_queue_t* q = ((unvme_session_t*)(ns->ses))->queues + qid;
     unvme_piocpq_t* piocpq = q->datapool.piocpq;
     unvme_page_t* pa;
 
@@ -186,5 +169,23 @@ unvme_page_t* unvme_apoll(const unvme_ns_t* ns, int qid, int sec)
     }
 
     return pa;
+}
+
+/**
+ * Create session extended function for the model.
+ * @param   ses         session
+ * @return  0 if ok else -1.
+ */
+void unvme_session_create_ext(unvme_session_t* ses)
+{
+}
+
+/**
+ * Delete session extended function for the model.
+ * @param   ses         session
+ * @return  0 if ok else -1.
+ */
+void unvme_session_delete_ext(unvme_session_t* ses)
+{
 }
 

@@ -24,13 +24,13 @@ ramp_time=RAMPTIME
 runtime=RUNTIME
 bs=BLOCKSIZE
 filename=FILENAME
-NSID
 
 [test]
 rw=RW
 numjobs=QCOUNT
 iodepth=QDEPTH"
 
+: ${FIODIR=$(grep '^FIO_DIR' ../Makefile.def | sed 's/.*=\s*//')}
 : ${RW="randread randwrite"}
 : ${QCOUNT="01 04 08 16"}
 : ${QDEPTH="0001 0004 0008 0016 0032 0064"}
@@ -65,13 +65,11 @@ for i in $@; do
         fi
         FILENAME=$i
         DRIVER="unvme"
-        NSID="nsid=1"
         ;;
 
     spdk/*:*.*)
         IOENGINE=../ioengine/spdk_fio
         DRIVER="spdk"
-        NSID="nsid=1"
         pci=$(basename $i)
         if [ -z "$(lspci | grep ^${pci} | grep 'Non-Volatile')" ]; then
             echo "No SSD at PCI ${pci}"
@@ -122,7 +120,11 @@ for rw in ${RW}; do
                 fi
             fi
 
-            echo "${FIOTEXT}" | sed -e "s?IOENGINE?${IOENGINE}?g;s?RAMPTIME?${RAMPTIME}?g;s?RUNTIME?${RUNTIME}?g;s?BLOCKSIZE?${BLOCKSIZE}?g;s?NSID?${NSID}?g;s?FILENAME?${FILENAME}?g;s?RW?${rw}?g;s?QCOUNT?${qc}?g;s?QDEPTH?${qd}?g" > ${FIOFILE}
+            if [ -z "${NSID}" ]; then
+                echo "${FIOTEXT}" | sed -e "s?IOENGINE?${IOENGINE}?g;s?RAMPTIME?${RAMPTIME}?g;s?RUNTIME?${RUNTIME}?g;s?BLOCKSIZE?${BLOCKSIZE}?g;s?FILENAME?${FILENAME}?g;s?RW?${rw}?g;s?QCOUNT?${qc}?g;s?QDEPTH?${qd}?g" > ${FIOFILE}
+            else
+                echo "${FIOTEXT}" | sed -e "s?IOENGINE?${IOENGINE}?g;s?RAMPTIME?${RAMPTIME}?g;s?RUNTIME?${RUNTIME}?g;s?BLOCKSIZE?${BLOCKSIZE}?g;s?FILENAME?${FILENAME}\nnsid=${NSID}?g;s?RW?${rw}?g;s?QCOUNT?${qc}?g;s?QDEPTH?${qd}?g" > ${FIOFILE}
+            fi
 
             echo "========"
             cmd cat ${FIOFILE} | tee -a ${OUTFILE}
@@ -130,7 +132,7 @@ for rw in ${RW}; do
             cmd /usr/bin/free -h | tee -a ${OUTFILE}
             echo -e "\n========\n" >> ${OUTFILE}
 
-            cmd ../fio/fio ${FIOFILE} 2>&1 | tee -a ${OUTFILE}
+            cmd ${FIODIR}/fio ${FIOFILE} 2>&1 | tee -a ${OUTFILE}
 
             if [ -n "$(grep maxt= ${OUTFILE})" ]; then
                 echo -e "\n========\n" >> ${OUTFILE}

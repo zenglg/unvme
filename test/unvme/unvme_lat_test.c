@@ -59,8 +59,8 @@
 static const unvme_ns_t* ns;    ///< unvme namespace pointer
 static int nsid = 1;            ///< namespace id
 static int qcount = 1;          ///< queue count
-static int qsize = 256;         ///< queue size
-static int runtime = 10;        ///< run time in seconds
+static int qsize = 8;           ///< queue size
+static int runtime = 30;        ///< run time in seconds
 static int rwmode = 0;          ///< read/write (0=read 1=write)
 static u64 endtsc = 0;          ///< end run tsc
 static sem_t sem1;              ///< semaphore to start thread
@@ -216,15 +216,16 @@ void run_test(const char* name, void *(thread)(void*))
     for (q = 0; q < qcount; q++) sem_post(&sem2);
     for (q = 0; q < qcount; q++) pthread_join(ses[q], 0);
 
-    printf("%s: ioc=%ld slat=(%lu %lu %lu) lat=(%lu %lu %lu)\n",
-            name, ioc, min_slat, max_slat, avg_slat/ioc,
-            min_clat, max_clat, avg_clat/ioc);
-
+    /*
+    printf("%s: slat=(%lu %lu %lu) lat=(%lu %lu %lu) ioc=%ld\n",
+            name, min_slat, max_slat, avg_slat/ioc,
+            min_clat, max_clat, avg_clat/ioc, ioc);
+    */
     u64 utsc = rdtsc_second() / 1000000;
-    printf("%s: ioc=%ld slat=(%.2f %.2f %.2f) lat=(%.2f %.2f %.2f)\n",
-            name, ioc, (double)min_slat/utsc, (double)max_slat/utsc,
+    printf("%s: slat=(%.2f %.2f %.2f) lat=(%.2f %.2f %.2f) ioc=%ld\n",
+            name, (double)min_slat/utsc, (double)max_slat/utsc,
             (double)avg_slat/ioc/utsc, (double)min_clat/utsc,
-            (double)max_clat/utsc, (double)avg_clat/ioc/utsc);
+            (double)max_clat/utsc, (double)avg_clat/ioc/utsc, ioc);
 }
 
 /**
@@ -234,11 +235,10 @@ int main(int argc, char* argv[])
 {
     const char* usage =
 "Usage: %s [OPTION]... vfioname\n\
-         -w       write test (default read)\n\
          -n       nsid (default to 1)\n\
          -q       queue count (default 1)\n\
-         -d       queue size (default 256)\n\
-         -t       run time in seconds (default 60)\n\
+         -d       queue size (default 8)\n\
+         -t       run time in seconds (default 30)\n\
          vfioname vfio device pathname\n";
 
     char* prog = strrchr(argv[0], '/');
@@ -247,9 +247,6 @@ int main(int argc, char* argv[])
     int opt;
     while ((opt = getopt(argc, argv, "wn:q:d:t:")) != -1) {
         switch (opt) {
-        case 'w':
-            rwmode = 1;
-            break;
         case 'n':
             nsid = atoi(optarg);
             break;
@@ -273,8 +270,8 @@ int main(int argc, char* argv[])
     if (optind >= argc) error(1, 0, usage, prog);
     char* vfioname = argv[optind];
 
-    printf("UNVMe %s %s latency test qc=%d qd=%d sec=%ldtsc\n",
-           vfioname, rwmode ? "write" : "read", qcount, qsize, rdtsc_second());
+    printf("UNVMe %s latency test qc=%d qd=%d sec=%ldtsc\n",
+           vfioname, qcount, qsize, rdtsc_second());
 
     ns = unvme_open(vfioname, nsid, qcount, qsize);
     if (!ns) ERROR("open %s failed", vfioname);
@@ -286,8 +283,13 @@ int main(int argc, char* argv[])
     sem_init(&sem2, 0, 0);
     ses = calloc(qcount, sizeof(pthread_t));
 
-    run_test("poll", poll_thread);
-    run_test("apoll", apoll_thread);
+    rwmode = 0;
+    run_test("read poll  ", poll_thread);
+    run_test("read apoll ", apoll_thread);
+
+    rwmode = 1;
+    run_test("write poll ", poll_thread);
+    run_test("write apoll", apoll_thread);
 
     free(ses);
     sem_destroy(&sem1);

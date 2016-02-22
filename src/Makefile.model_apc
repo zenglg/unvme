@@ -34,6 +34,8 @@ LIB_OBJS = $(LIB_SRCS:.c=.o)
 
 default: $(TARGET_LIB)
 
+$(LIB_OBJS): $(INCLUDES)
+
 $(TARGET_LIB): $(LIB_OBJS)
 	$(AR) crs $@ $(LIB_OBJS)
 

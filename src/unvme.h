@@ -74,54 +74,60 @@ typedef enum {
 } unvme_model_t;
 
 /// page tracking status code
-enum {
+typedef enum {
     UNVME_PS_FREE       = 0,            ///< page is free
     UNVME_PS_READY      = 1,            ///< page is idle
-    UNVME_PS_PENDING    = 2,            ///< page is io pending
-};
+    UNVME_PS_PENDING    = 2,            ///< page is I/O pending
+} unvme_ustat_t;
 
-// client server interface command code (MODEL_CS)
-enum {
+/// client server interface command (MODEL_CS)
+typedef enum {
     UNVME_CMD_NULL      = 0,            ///< no command
-    UNVME_CMD_WRITE     = NVME_CMD_WRITE, ///< must be same as NVME_CMD_WRITE
-    UNVME_CMD_READ      = NVME_CMD_READ,  ///< must be same as NVME_CMD_READ
-    UNVME_CMD_OPEN,                     ///< open
-    UNVME_CMD_CLOSE,                    ///< close
-    UNVME_CMD_ALLOC,                    ///< allocate a page
-    UNVME_CMD_FREE,                     ///< free a page
-    UNVME_CMD_QUIT,                     ///< quit command
-};
+    UNVME_CMD_WRITE     = 1,            ///< must be same as NVME_CMD_WRITE
+    UNVME_CMD_READ      = 2,            ///< must be same as NVME_CMD_READ
+    UNVME_CMD_OPEN      = 3,            ///< open
+    UNVME_CMD_CLOSE     = 4,            ///< close
+    UNVME_CMD_ALLOC     = 5,            ///< allocate a page
+    UNVME_CMD_FREE      = 6,            ///< free a page
+} unvme_cscmd_t;
 
 
 /// client server interface message (MODEL_CS)
 typedef struct _unvme_msg {
-    u32                     id;         ///< message id
-    int                     cmd;        ///< command code
+    unvme_cscmd_t           cmd;        ///< client server command
+    unvme_cscmd_t           ack;        ///< command ack
     int                     stat;       ///< returned status
     union {
-        // open-close command-response parameters
+        // open-close message
         struct {
             pid_t           cpid;       ///< client pid
             int             nsid;       ///< nsid
-            int             qcount;     ///< number of io queues
-            int             qsize;      ///< io queue size
-            int             nvqid;      ///< starting NVMe qid
+            int             qcount;     ///< number of I/O queues
+            int             qsize;      ///< I/O queue size
+            int             sid;        ///< session id (starting queue id)
             unvme_ns_t      ns;         ///< returned namespace attributes
         };
-        // read-write command parameters
-        unvme_page_t    pa[0];      ///< page array
-        // alloc-free command parameters
-        int                 pgid;       ///< page id
+        // alloc-free message
+        int                 pgid;       ///< returned page id
+        // read-write message
+        unvme_page_t        pa[0];      ///< page array
     };
 } unvme_msg_t;
 
 /// client server interface structure (MODEL_CS)
 typedef struct _unvme_csif {
-    pthread_t               thread;     ///< processing thread
+    pthread_t               thread;     ///< thread array
+    int                     stop;       ///< thread stop flag
     shm_file_t*             sf;         ///< shared memory file
-    sem_t*                  req;        ///< shared request semaphore
-    sem_t*                  ack;        ///< shared ack semaphore
-    unvme_msg_t*            msg;        ///< shared message
+    sem_t*                  sem;        ///< shared request semaphore
+    int                     msglen;     ///< message length
+    void*                   msgbuf;     ///< shared message buffer array
+    int                     mqsize;     ///< message queue size
+    int*                    mqcount;    ///< shared message queue count
+    int*                    mqhead;     ///< shared message queue head
+    int*                    mqtail;     ///< shared message queue tail
+    int*                    mq;         ///< shared message queue
+    pthread_spinlock_t      mqlock;     ///< message queue lock for client
 } unvme_csif_t;
 
 /// thread process completion structure
@@ -131,7 +137,7 @@ typedef struct _unvme_tpc {
     sem_t                   sem;        ///< submitted semaphore count
 } unvme_tpc_t;
 
-/// page io completion queue
+/// page I/O completion queue
 typedef struct _unvme_piocpq {
     int                     size;       ///< queue size
     int                     count;      ///< completion count
@@ -140,10 +146,10 @@ typedef struct _unvme_piocpq {
     unvme_page_t*           pa[0];      ///< array of completion page pointers
 } unvme_piocpq_t;
 
-/// page io status tracking
+/// page I/O status tracking
 typedef struct _unvme_piostat {
     unvme_page_t*           cpa;        ///< client page array reference
-    int                     ustat;      ///< page usage status
+    unvme_ustat_t           ustat;      ///< page usage status
     int                     cstat;      ///< page completion status
 } unvme_piostat_t;
 
@@ -152,79 +158,63 @@ typedef struct _unvme_datapool {
     shm_file_t*             sf;         ///< shared memory file (MODEL_CS)
     vfio_dma_t*             data;       ///< dma memory for page data
     vfio_dma_t*             prplist;    ///< dma memory for PRP list
-    unvme_piostat_t*        piostat;    ///< page io status
-    unvme_piocpq_t*         piocpq;     ///< page io completion queue
+    unvme_piostat_t*        piostat;    ///< page I/O status
+    unvme_piocpq_t*         piocpq;     ///< page I/O completion queue
     int                     nextsi;     ///< next search index for free page
 } unvme_datapool_t;
 
+/// client page array allocation
+typedef struct _unvme_pal {
+    unvme_page_t*           pa;         ///< page array
+    int                     count;      ///< number of pages
+    struct _unvme_pal*      prev;       ///< previous allocated node
+    struct _unvme_pal*      next;       ///< next allocated node
+} unvme_pal_t;
+
+struct _unvme_session;
 struct _unvme_device;
 
 /// queue context
 typedef struct _unvme_queue {
-    struct _unvme_device*   dev;        ///< device reference
-    nvme_queue_t*           nvq;        ///< NVMe queue
-    unvme_ns_t*             ns;         ///< namespace reference
-    int                     gid;        ///< queue group id
-    pid_t                   cpid;       ///< client process id
+    struct _unvme_session*  ses;        ///< session reference
+    nvme_queue_t*           nvq;        ///< NVMe associated queue
     vfio_dma_t*             sqdma;      ///< submission queue allocation
     vfio_dma_t*             cqdma;      ///< completion queue allocation
-    unvme_datapool_t        datapool;   ///< data pool
-    unvme_csif_t            csif;       ///< client server interface (MODEL_CS)
-    unvme_tpc_t             tpc;        ///< thread process completion
-    struct _unvme_queue*    prev;       ///< previous queue link
-    struct _unvme_queue*    next;       ///< next queue link
+    unvme_datapool_t        datapool;   ///< queue associated data pool
+    int                     pac;        ///< client page allocation count
+    unvme_pal_t*            pal;        ///< client page allocation list
 } unvme_queue_t;
+
+/// open session
+typedef struct _unvme_session {
+    struct _unvme_device*   dev;        ///< device reference
+    unvme_ns_t              ns;         ///< namespace info
+    pid_t                   cpid;       ///< client process id
+    int                     id;         ///< session id (same as queues[0] id)
+    int                     qcount;     ///< number of queues
+    int                     qsize;      ///< queue size
+    unvme_queue_t*          queues;     ///< array of queues
+    unvme_tpc_t             tpc;        ///< thread process completion
+    unvme_csif_t            csif;       ///< client server interface (MODEL_CS)
+    struct _unvme_session*  prev;       ///< previous session node
+    struct _unvme_session*  next;       ///< next session node
+} unvme_session_t;
 
 /// device context
 typedef struct _unvme_device {
     vfio_device_t*          vfiodev;    ///< vfio device
     nvme_device_t*          nvmedev;    ///< nvme device
-    unvme_ns_t*             ns;         ///< namespace list
-    unvme_queue_t           adminq;     ///< admin queue
-    int                     numioqs;    ///< number of io queues
-    int                     maxiolen;   ///< max io size
-    unvme_queue_t*          ioqlist;    ///< io queue list
-    pthread_spinlock_t      lock;       ///< device access lock
+    unvme_session_t*        ses;        ///< session list
+    int                     numioqs;    ///< total number of I/O queues
+    pthread_spinlock_t      lock;       ///< device lock
 } unvme_device_t;
 
-/// client page array allocation entry
-typedef struct _client_pal {
-    unvme_page_t*           pa;         ///< page array
-    int                     count;      ///< number of pages
-    struct _client_pal*     prev;       ///< previous allocated node
-    struct _client_pal*     next;       ///< next allocated node
-} client_pal_t;
-
-struct _client_session;
-
-/// client queue
-typedef struct _client_queue {
-    struct _client_session* ses;        ///< queue session owner
-    int                     id;         ///< client queue index
-    int                     pac;        ///< page allocation count
-    client_pal_t*           pal;        ///< page array allocation list
-    unvme_queue_t*          ioq;        ///< NVMe io queue
-    int                     nvqid;      ///< NVMe queue id (MODEL_CS)
-    unvme_datapool_t        datapool;   ///< data pool (MODEL_CS)
-    unvme_csif_t            csif;       ///< client server interface (MODEL_CS)
-} client_queue_t;
-
-/// client session
-typedef struct _client_session {
-    struct _client_session* prev;       ///< previous session
-    struct _client_session* next;       ///< next session
-    unvme_ns_t              ns;         ///< namespace info
-    int                     qsize;      ///< queue size
-    int                     qcount;     ///< number of queues
-    client_queue_t*         queues;     ///< array of client queue entries
-} client_session_t;
-
-/// main client structure
-typedef struct _client_data {
-    client_session_t*       ses;        ///< client open session list
-    pid_t                   cpid;       ///< client pid
-    unvme_csif_t            csifadm;    ///< admin interface (MODEL_CS)
-} client_main_t;
+/// client data structure
+typedef struct _unvme_client {
+    pthread_mutex_t         lock;       ///< client lock
+    unvme_csif_t            csif;       ///< admin client server interface
+    unvme_session_t*        ses;        ///< open session list
+} unvme_client_t;
 
 
 // Forward declarations
@@ -232,27 +222,27 @@ unvme_device_t* unvme_init(int count);
 void unvme_cleanup(void);
 void unvme_dev_init(unvme_device_t* dev, int vfid);
 void unvme_dev_cleanup(unvme_device_t* dev);
+
 void unvme_datapool_alloc(unvme_queue_t* ioq);
 void unvme_datapool_free(unvme_queue_t* ioq);
-void unvme_adminq_create_ext(unvme_queue_t* adminq);
-void unvme_adminq_delete_ext(unvme_queue_t* adminq);
-void unvme_ioq_create_ext(unvme_queue_t* ioq);
-void unvme_ioq_delete_ext(unvme_queue_t* ioq);
+void unvme_session_create_ext(unvme_session_t* ses);
+void unvme_session_delete_ext(unvme_session_t* ses);
+
 void* unvme_tpc_thread(void* arg);
-void unvme_tpc_create(unvme_queue_t* ioq);
-void unvme_tpc_delete(unvme_queue_t* ioq);
-unvme_page_t* unvme_tpc_poll(unvme_datapool_t* datapool, unvme_page_t* pa, int sec);
-unvme_page_t* unvme_tpc_apoll(unvme_datapool_t* datapool, int sec);
-unvme_queue_t* unvme_do_open(unvme_device_t* dev, int vfid, pid_t cpid, int nsid, int qcount, int qsize);
-int unvme_do_close(unvme_device_t* dev, pid_t cpid, int gid);
+void unvme_tpc_create(unvme_session_t* ses);
+void unvme_tpc_delete(unvme_session_t* ses);
+
+unvme_session_t* unvme_do_open(unvme_device_t* dev, int vfid, pid_t cpid,
+                               int nsid, int qcount, int qsize);
+int unvme_do_close(unvme_device_t* dev, pid_t cpid, int sid);
 int unvme_do_alloc(unvme_queue_t* ioq);
 int unvme_do_free(unvme_queue_t* ioq, int id);
 int unvme_do_rw(unvme_queue_t* ioq, unvme_page_t* pa, int opc);
-int client_open(client_session_t* ses, int vfid, int nsid);
-int client_close(client_session_t* ses);
-int client_alloc(client_queue_t* q, client_pal_t* pal);
-int client_free(client_queue_t* q, client_pal_t* pal);
+
+unvme_session_t* client_open(int vfid, int nsid, int qcount, int qsize);
+int client_close(const unvme_ns_t* ns);
+int client_alloc(const unvme_ns_t* ns, unvme_pal_t* pal);
+int client_free(const unvme_ns_t* ns, unvme_pal_t* pal);
 int client_rw(const unvme_ns_t* ns, unvme_page_t* pa, int opc);
 
 #endif  // _UNVME_H
-

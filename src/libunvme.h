@@ -58,9 +58,9 @@ typedef struct _unvme_ns {
     int                 id;         ///< namespace id
     int                 vid;        ///< PCI vendor id
     char                model[8];   ///< compiled model name
-    char                sn[21];     ///< serial number
-    char                mn[41];     ///< namespace model number
-    char                fr[9];      ///< namespace firmware revision
+    char                sn[20];     ///< serial number
+    char                mn[40];     ///< namespace model number
+    char                fr[8];      ///< namespace firmware revision
     int                 maxqsize;   ///< max queue size supported
     int                 pagesize;   ///< page size
     int                 blocksize;  ///< logical block size

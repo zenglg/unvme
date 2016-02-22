@@ -39,10 +39,12 @@
 
 #include "unvme.h"
 
-int unvme_model = UNVME_MODEL_CS;       /// CS client server model
+/// CS client server model
+int unvme_model = UNVME_MODEL_CS;
 
 extern int unvme_devcount;
 extern sem_t unvme_sem;
+static void* unvme_csif_thread(void* arg);
 
 
 /**
@@ -51,10 +53,11 @@ extern sem_t unvme_sem;
  */
 void unvme_datapool_alloc(unvme_queue_t* ioq)
 {
-    unvme_device_t* dev = ioq->dev;
+    unvme_device_t* dev = ioq->ses->dev;
+    unvme_ns_t* ns = &ioq->ses->ns;
     unvme_datapool_t* datapool = &ioq->datapool;
-    size_t datasize = ioq->ns->maxppq * ioq->ns->pagesize;
-    size_t statsize = ioq->ns->maxppq * sizeof(unvme_piostat_t);
+    size_t datasize = ns->maxppq * ns->pagesize;
+    size_t statsize = ns->maxppq * sizeof(unvme_piostat_t);
     size_t cpqsize = sizeof(unvme_piocpq_t) + ioq->nvq->size * sizeof(unvme_page_t*);
 
     DEBUG_FN("%d.%d", dev->vfiodev->id, ioq->nvq->id);
@@ -69,7 +72,7 @@ void unvme_datapool_alloc(unvme_queue_t* ioq)
     datapool->piocpq->size = ioq->nvq->size;
 
     // allocate PRP list for large IO transfer
-    size_t prplistsize = ioq->ns->maxppq * ioq->ns->pagesize;
+    size_t prplistsize = ns->maxppq * ns->pagesize;
     datapool->prplist = vfio_dma_alloc(dev->vfiodev, prplistsize);
     if (!datapool->prplist) FATAL();
 }
@@ -82,244 +85,222 @@ void unvme_datapool_free(unvme_queue_t* ioq)
 {
     unvme_datapool_t* datapool = &ioq->datapool;
 
-    DEBUG_FN("%d.%d", ioq->dev->vfiodev->id, ioq->nvq->id);
-    if (vfio_dma_free(datapool->prplist)) FATAL();
-    if (vfio_dma_unmap(datapool->data)) FATAL();
-    if (shm_delete(datapool->sf)) FATAL();
-}
-
-/**
- * Create a per queue client server interface to process client commands. 
- * @param   q           queue
- */
-void unvme_csif_create(unvme_queue_t* q)
-{
-    void* unvme_csif_thread(void* arg);
-    char path[32];
-    sprintf(path, "/unvme.csif.%d.%d", q->dev->vfiodev->id, q->nvq->id);
-    size_t size = 2 * sizeof(sem_t) +
-                  sizeof(unvme_msg_t) + sizeof(unvme_page_t) * q->ns->maxppio;
-    q->csif.sf = shm_create(path, size);
-    if (!q->csif.sf) FATAL();
-    q->csif.req = (sem_t*)(q->csif.sf->buf);
-    q->csif.ack = q->csif.req + 1;
-    q->csif.msg = (unvme_msg_t*)(q->csif.ack + 1);
-
-    if (sem_init(q->csif.req, 1, 0) || sem_init(q->csif.ack, 1, 0)) {
-        FATAL("sem_init");
-    }
-    if (pthread_create(&q->csif.thread, 0, unvme_csif_thread, q)) {
-        FATAL("pthread_create");
-    }
-    sem_wait(&unvme_sem);
-}
-
-/**
- * Delete a per queue client server interface.
- * @param   q           queue
- */
-void unvme_csif_delete(unvme_queue_t* q)
-{
-    if (!q->csif.sf) return;
-
-    q->csif.msg->cmd = UNVME_CMD_QUIT;
-    sem_post(q->csif.req);
-    if (q->csif.thread) pthread_join(q->csif.thread, 0);
-    sem_destroy(q->csif.req);
-    sem_destroy(q->csif.ack);
-    if (shm_delete(q->csif.sf)) FATAL();
-}
-
-/**
- * Create admin queue model extended function.
- * @param   adminq      admin queue
- */
-void unvme_adminq_create_ext(unvme_queue_t* adminq)
-{
-    unvme_csif_create(adminq);
-}
-
-/**
- * Delete admin queue model extended function.
- * @param   adminq      admin queue
- */
-void unvme_adminq_delete_ext(unvme_queue_t* adminq)
-{
-    unvme_csif_delete(adminq);
-}
-
-/**
- * Create IO queue model extended function.
- * @param   ioq         io queue
- */
-void unvme_ioq_create_ext(unvme_queue_t* ioq)
-{
-    unvme_tpc_create(ioq);
-    unvme_csif_create(ioq);
-}
-
-/**
- * Delete IO queue model extended function.
- * @param   ioq         io queue
- */
-void unvme_ioq_delete_ext(unvme_queue_t* ioq)
-{
-    unvme_csif_delete(ioq);
-    unvme_tpc_delete(ioq);
-}
-
-/**
- * Receive a client message.
- * @param   q           queue
- * @return  0 if ok else -1.
- */
-static int unvme_csif_recv(unvme_queue_t* q)
-{
-    int err = sem_wait(q->csif.req);
-    if (err) ERROR("sem_wait q=%d", q->nvq->id);
-    return err;
-}
-
-/**
- * Send a reply message to client.
- * @param   q           queue
- * @return  0 if ok else -1.
- */
-static int unvme_csif_ack(unvme_queue_t* q)
-{
-    q->csif.msg->cmd = UNVME_CMD_NULL;
-    int err = sem_post(q->csif.ack);
-    if (err) ERROR("sem_post q=%d", q->nvq->id);
-    return err;
+    DEBUG_FN("%d.%d", ioq->ses->dev->vfiodev->id, ioq->nvq->id);
+    if (vfio_dma_free(datapool->prplist) ||
+        vfio_dma_unmap(datapool->data) ||
+        shm_delete(datapool->sf)) FATAL();
 }
 
 /**
  * Process client open command to create io queues.
- * @param   dev         device context
+ * @param   ses         session
  */
-static void unvme_client_open(unvme_device_t* dev)
+static void unvme_client_open(unvme_session_t* ses)
 {
-    unvme_msg_t* msg = dev->adminq.csif.msg;
-    unvme_queue_t* ioq = unvme_do_open(dev, dev->vfiodev->id, msg->cpid,
-                                       msg->nsid, msg->qcount, msg->qsize);
-    if (ioq) {
-        msg->nvqid = ioq->nvq->id;
-        memcpy(&msg->ns, ioq->ns, sizeof(unvme_ns_t));
+    unvme_device_t* dev = ses->dev;
+    unvme_msg_t* msg = ses->csif.msgbuf;
+    unvme_session_t* newses = unvme_do_open(dev, dev->vfiodev->id, msg->cpid,
+                                            msg->nsid, msg->qcount, msg->qsize);
+    if (newses) {
+        msg->sid = newses->id;
+        memcpy(&msg->ns, &newses->ns, sizeof(unvme_ns_t));
         msg->stat = 0;
     } else {
-        msg->nvqid = 0;
+        msg->sid = -1;
         msg->stat = -1;
     }
-    unvme_csif_ack(&dev->adminq);
+    msg->ack = msg->cmd;
 }
 
 /**
  * Process client close request.
- * @param   dev         device context
+ * @param   ses         session
  */
-static void unvme_client_close(unvme_device_t* dev)
+static void unvme_client_close(unvme_session_t* ses)
 {
-    unvme_msg_t* msg = dev->adminq.csif.msg;
-    unvme_do_close(dev, msg->cpid, msg->nvqid);
+    unvme_msg_t* msg = ses->csif.msgbuf;
+    unvme_do_close(ses->dev, msg->cpid, msg->sid);
     msg->stat = 0;
-    unvme_csif_ack(&dev->adminq);
+    msg->ack = msg->cmd;
 }
 
 /**
  * Process client allocation request.
  * @param   ioq         io queue
+ * @param   msg         message
  */
-static void unvme_client_alloc(unvme_queue_t* ioq)
+static inline void unvme_client_alloc(unvme_queue_t* ioq, unvme_msg_t* msg)
 {
-    unvme_msg_t* msg = ioq->csif.msg;
     msg->pgid = unvme_do_alloc(ioq);
     msg->stat = msg->pgid >= 0 ? 0 : -1;
-    unvme_csif_ack(ioq);
+    msg->ack = msg->cmd;
 }
 
 /**
  * Process client free request.
  * @param   ioq         io queue
+ * @param   msg         message
  */
-static void unvme_client_free(unvme_queue_t* ioq)
+static inline void unvme_client_free(unvme_queue_t* ioq, unvme_msg_t* msg)
 {
-    unvme_msg_t* msg = ioq->csif.msg;
     msg->stat = unvme_do_free(ioq, msg->pgid);
-    unvme_csif_ack(ioq);
+    msg->ack = msg->cmd;
 }
 
 /**
  * Process client write/read request.
  * @param   ioq         io queue
+ * @param   msg         message
  */
-static inline void unvme_client_rw(unvme_queue_t* ioq)
+static inline void unvme_client_rw(unvme_queue_t* ioq, unvme_msg_t* msg)
 {
-    unvme_msg_t* msg = ioq->csif.msg;
     msg->stat = unvme_do_rw(ioq, msg->pa, msg->cmd);
-    unvme_csif_ack(ioq);
+    msg->ack = msg->cmd;
+}
+
+/**
+ * Create a session client server interface to process client commands. 
+ * @param   ses         session
+ */
+static void unvme_csif_create(unvme_session_t* ses)
+{
+    char path[32];
+    sprintf(path, "/unvme.csif.%d.%d", ses->dev->vfiodev->id, ses->id);
+    unvme_csif_t* csif = &ses->csif;
+    csif->mqsize = ses->qcount + 1;
+    csif->msglen = sizeof(unvme_msg_t) + sizeof(unvme_page_t) * ses->ns.maxppio;
+    csif->sf = shm_create(path, sizeof(sem_t) +
+                                csif->msglen * ses->qcount +
+                                sizeof(int) * (3 + csif->mqsize));
+    if (!csif->sf) FATAL();
+    csif->sem = (sem_t*)csif->sf->buf;
+    csif->msgbuf = csif->sem + 1;
+    csif->mqcount = (int*)(csif->msgbuf + csif->msglen * ses->qcount);
+    csif->mqhead = csif->mqcount + 1;
+    csif->mqtail = csif->mqhead + 1;
+    csif->mq = csif->mqtail + 1;
+
+    if (sem_init(csif->sem, 1, 0) ||
+        pthread_create(&csif->thread, 0, unvme_csif_thread, ses)) FATAL();
+    sem_wait(&unvme_sem);
+}
+
+/**
+ * Delete a session client server interface.
+ * @param   ses         session
+ */
+static void unvme_csif_delete(unvme_session_t* ses)
+{
+    unvme_csif_t* csif = &ses->csif;
+    if (!csif->sf) return;
+    csif->stop = 1;
+    sem_post(csif->sem);
+    pthread_join(csif->thread, 0);
+    sem_destroy(csif->sem);
+    shm_delete(csif->sf);
+}
+
+/**
+ * Receive a message from client.
+ * @param   csif        interface
+ * @return  session queue index.
+ */
+static inline int csif_recv(unvme_csif_t* csif)
+{
+    while (*csif->mqcount == 0) {
+        if (csif->stop) return -1;
+        sem_wait(csif->sem);
+    }
+
+    int* mqhead = csif->mqhead;
+    int sqi = csif->mq[*mqhead];
+    if (++(*mqhead) == csif->mqsize) *mqhead = 0;
+    atomic_sub(csif->mqcount, 1);
+    return sqi;
 }
 
 /**
  * Thread to process client commands.
  * @param   arg         queue
  */
-void* unvme_csif_thread(void* arg)
+static void* unvme_csif_thread(void* arg)
 {
-    unvme_queue_t* q = arg;
-    unvme_device_t* dev = q->dev;
-    unvme_msg_t* msg = q->csif.msg;
-    int quit = 0;
+    unvme_session_t* ses = arg;
+    unvme_csif_t* csif = &ses->csif;
+    unvme_msg_t* msg = csif->msgbuf;
 
-    DEBUG_FN("q=%d start", q->nvq->id);
+    INFO_FN("%d: start ses=%d", ses->dev->vfiodev->id, ses->id);
     sem_post(&unvme_sem);
 
-    if (q->nvq->id == 0) {
-        // admin message queue processes open and close commands
-        while (!quit) {
-            if (unvme_csif_recv(q)) break;
+    if (ses->id == 0) {
+        for (;;) {
+            sem_wait(csif->sem);
+            if (csif->stop) goto end;
 
-            pthread_spin_lock(&dev->lock);
+            pthread_spin_lock(&ses->dev->lock);
             switch (msg->cmd) {
             case UNVME_CMD_OPEN:
-                unvme_client_open(dev);
+                unvme_client_open(ses);
                 break;
             case UNVME_CMD_CLOSE:
-                unvme_client_close(dev);
-                break;
-            case UNVME_CMD_QUIT:
-                quit = 1;
+                unvme_client_close(ses);
                 break;
             default:
-                ERROR("q=0 id=%d cmd=%d", msg->id, msg->cmd);
+                ERROR("cmd=%d", msg->cmd);
+                goto end;
             }
-            pthread_spin_unlock(&dev->lock);
+            pthread_spin_unlock(&ses->dev->lock);
         }
     } else {
-        while (!quit) {
-            if (unvme_csif_recv(q)) break;
+        for (;;) {
+            int sqi = csif_recv(csif);
+            if (sqi < 0) goto end;
+            unvme_queue_t* ioq = ses->queues + sqi;
+            msg = csif->msgbuf + sqi * csif->msglen;
 
             switch (msg->cmd) {
             case UNVME_CMD_ALLOC:
-                unvme_client_alloc(q);
+                unvme_client_alloc(ioq, msg);
                 break;
             case UNVME_CMD_FREE:
-                unvme_client_free(q);
+                unvme_client_free(ioq, msg);
                 break;
             case UNVME_CMD_READ:
             case UNVME_CMD_WRITE:
-                unvme_client_rw(q);
-                break;
-            case UNVME_CMD_QUIT:
-                quit = 1;
+                unvme_client_rw(ioq, msg);
                 break;
             default:
-                ERROR("q=%d id=%d cmd=%d", q->nvq->id, msg->id, msg->cmd);
+                ERROR("ses=%d.%d cmd=%d", ses->id, sqi, msg->cmd);
+                goto end;
             }
         }
     }
 
-    DEBUG_FN("q=%d exit", q->nvq->id);
+end:
+    INFO_FN("%d: end ses=%d", ses->dev->vfiodev->id, ses->id);
     return 0;
+}
+
+/**
+ * Create session extended function for the model.
+ * @param   ses         session
+ * @return  0 if ok else -1.
+ */
+void unvme_session_create_ext(unvme_session_t* ses)
+{
+    unvme_tpc_create(ses);
+    unvme_csif_create(ses);
+}
+
+/**
+ * Delete session extended function for the model.
+ * @param   ses         session
+ * @return  0 if ok else -1.
+ */
+void unvme_session_delete_ext(unvme_session_t* ses)
+{
+    unvme_csif_delete(ses);
+    unvme_tpc_delete(ses);
 }
 
 /**
@@ -390,21 +371,23 @@ int main(int argc, char* argv[])
 
     // loop and detect dead clients
     for (d = 0; ;) {
-        int i;
         sleep(8);
         pthread_spin_lock(&dev[d].lock);
-        unvme_queue_t* ioq = dev[d].ioqlist;
-        for (i = 0; i < dev[d].numioqs; i++) {
-            if (kill(ioq->cpid, 0)) {
-                INFO("===\ndead client pid %d", ioq->cpid);
-                unvme_do_close(&dev[d], ioq->cpid, 0);
+        unvme_session_t* ses = dev[d].ses->next;
+        while (ses != dev[d].ses) {
+            if (kill(ses->cpid, 0)) {
+                INFO("===\ndead client pid %d", ses->cpid);
+                unvme_do_close(&dev[d], ses->cpid, 0);
                 break;
             }
-            ioq = ioq->next;
+            ses = ses->next;
         }
         pthread_spin_unlock(&dev[d].lock);
         if (++d == unvme_devcount) d = 0;
     }
+
+    /* NOT REACHED */
+    return 0;
 
 usage:
     fprintf(stderr, usage, prog);

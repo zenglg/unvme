@@ -56,23 +56,22 @@ static unvme_page_t* unvme_cpq_get(unvme_piocpq_t* piocpq, int id)
         }
         if (++h == piocpq->size) h = 0;
     }
-    //DEBUG_FN("cid %d not found (%d)", id, piocpq->count);
     return NULL;
 }
 
 /**
  * Poll and wait for a specific page io completion in a queue.
- * @param   datapool    data pool
+ * @param   ns          namespace handle
  * @param   pa          page array
  * @param   sec         number of seconds to wait before timeout
  * @return  pointer to the page array completed or NULL if timeout.
  */
-unvme_page_t* unvme_tpc_poll(unvme_datapool_t* datapool, unvme_page_t* pa, int sec)
+unvme_page_t* unvme_poll(const unvme_ns_t* ns, unvme_page_t* pa, int sec)
 {
+    unvme_queue_t* ioq = ((unvme_session_t*)(ns->ses))->queues + pa->qid;
     int cid = pa->id;
-    volatile unvme_piostat_t* piostat = &datapool->piostat[cid];
+    volatile unvme_piostat_t* piostat = ioq->datapool.piostat + cid;
 
-    // built-in thread processes completion
     if (sec == 0) {
         if (piostat->ustat != UNVME_PS_READY) return NULL;
     } else {
@@ -87,16 +86,9 @@ unvme_page_t* unvme_tpc_poll(unvme_datapool_t* datapool, unvme_page_t* pa, int s
         }
     }
 
-    unvme_piocpq_t* piocpq = datapool->piocpq;
-    int n = piocpq->size;
+    unvme_piocpq_t* piocpq = ioq->datapool.piocpq;
     unvme_page_t* p;
-    while (!(p = unvme_cpq_get(piocpq, cid))) {
-        if (--n == 0) {
-            n = piocpq->size;
-            ERROR("page cid=%#x not in completion list", cid);
-        }
-        sched_yield();
-    }
+    while (!(p = unvme_cpq_get(piocpq, cid))) sched_yield();
     if (p != pa) ERROR("page cid=%#x address mismatch (%p != %p)", cid, p, pa);
 
     p->stat = piostat->cstat;
@@ -105,16 +97,16 @@ unvme_page_t* unvme_tpc_poll(unvme_datapool_t* datapool, unvme_page_t* pa, int s
 
 /**
  * Poll and wait for any page io completion in the specified queue.
- * @param   datapool    data pool
+ * @param   ns          namespace handle
+ * @param   qid         client queue id
  * @param   sec         number of seconds to poll before timeout
  * @return  pointer to the page array completed or NULL if timeout.
  */
-unvme_page_t* unvme_tpc_apoll(unvme_datapool_t* datapool, int sec)
+unvme_page_t* unvme_apoll(const unvme_ns_t* ns, int qid, int sec)
 {
-    volatile unvme_piocpq_t* piocpq = datapool->piocpq;
-    unvme_page_t* pa;
+    unvme_queue_t* ioq = ((unvme_session_t*)(ns->ses))->queues + qid;
+    volatile unvme_piocpq_t* piocpq = ioq->datapool.piocpq;
 
-    // built-in thread processes completion
     if (sec == 0) {
         if (piocpq->count == 0) return NULL;
     } else {
@@ -130,8 +122,8 @@ unvme_page_t* unvme_tpc_apoll(unvme_datapool_t* datapool, int sec)
     }
 
     // retrieve the first completion queue entry
-    pa = piocpq->pa[piocpq->head];
-    pa->stat = datapool->piostat[pa->id].cstat;
+    unvme_page_t* pa = piocpq->pa[piocpq->head];
+    pa->stat = ioq->datapool.piostat[pa->id].cstat;
     if (++piocpq->head == piocpq->size) piocpq->head = 0;
     atomic_sub(&piocpq->count, 1);
 

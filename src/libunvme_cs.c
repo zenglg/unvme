@@ -38,49 +38,77 @@
 
 #include "unvme.h"
 
-extern client_main_t client;
+extern unvme_client_t client;
 
 
 /**
  * Map the client server interface.
  * @param   csif        interface handle
+ * @param   ses         session
  * @param   vfid        vfio device number
- * @param   qid         queue id
  */
-static void csif_map(unvme_csif_t* csif, int vfid, int qid)
+static void csif_map(unvme_csif_t* csif, unvme_session_t* ses, int vfid)
 {
     char path[32];
-    sprintf(path, "/unvme.csif.%d.%d", vfid, qid);
+    sprintf(path, "/unvme.csif.%d.%d", vfid, ses ? ses->id : 0);
     csif->sf = shm_map(path);
     if (!csif->sf) exit(1);
-    csif->req = (sem_t*)(csif->sf->buf);
-    csif->ack = csif->req + 1;
-    csif->msg = (unvme_msg_t*)(csif->ack + 1);
+    csif->sem = (sem_t*)csif->sf->buf;
+    csif->msgbuf = csif->sem + 1;
+    if (ses) {
+        csif->mqsize = ses->qcount + 1;
+        csif->msglen = sizeof(unvme_msg_t) + sizeof(unvme_page_t) * ses->ns.maxppio;
+        csif->mqcount = (int*)(csif->msgbuf + csif->msglen * ses->qcount);
+        csif->mqhead = csif->mqcount + 1;
+        csif->mqtail = csif->mqhead + 1;
+        csif->mq = csif->mqtail + 1;
+        pthread_spin_init(&csif->mqlock, PTHREAD_PROCESS_PRIVATE);
+    }
 }
 
 /**
  * Unmap the client server interface.
  * @param   csif        interface handle
  */
-static void csif_unmap(unvme_csif_t* csif)
+static inline void csif_unmap(unvme_csif_t* csif)
 {
+    if (csif->mq) pthread_spin_destroy(&csif->mqlock);
     shm_unmap(csif->sf);
 }
 
 /**
- * Send a command to the server and wait for response.
- * @param   csif    interface handle
- * @return  0 if ok else -1.
+ * Send a request to the server and wait for acknowledgement.
+ * @param   csif    interface
+ * @param   msg     message
  */
-static int csif_cmd(unvme_csif_t* csif)
+static inline void csif_send(unvme_csif_t* csif, unvme_msg_t* msg)
 {
-    static u32 msgid = 0;
-    unvme_msg_t* msg = csif->msg;
-
-    msg->id = ++msgid;
+    msg->ack = UNVME_CMD_NULL;
     msg->stat = -1;
-    if (sem_post(csif->req) || sem_wait(csif->ack)) return msg->stat;
-    return 0;
+    sem_post(csif->sem);
+    while (msg->ack != msg->cmd) sched_yield();
+}
+
+/**
+ * Put a command on the queue to send to server and wait for acknowledgement.
+ * @param   csif    interface
+ * @param   qid     client session queue id
+ * @param   msg     message
+ */
+static inline void csif_post(unvme_csif_t* csif, int qid, unvme_msg_t* msg)
+{
+    msg->ack = UNVME_CMD_NULL;
+    msg->stat = -1;
+
+    pthread_spin_lock(&csif->mqlock);
+    csif->mq[*csif->mqtail] = qid;
+    if (++(*csif->mqtail) == csif->mqsize) *csif->mqtail = 0;
+    pthread_spin_unlock(&csif->mqlock);
+
+    atomic_add(csif->mqcount, 1);
+    sem_post(csif->sem);
+
+    while (msg->ack != msg->cmd) sched_yield();
 }
 
 /**
@@ -89,7 +117,7 @@ static int csif_cmd(unvme_csif_t* csif)
  * @param   vfid        vfio device number
  * @param   qid         queue id
  */
-static void datapool_map(client_queue_t* q, int vfid, int qid)
+static void datapool_map(unvme_queue_t* q, int vfid, int qid)
 {
     size_t datasize = q->ses->ns.maxppq * q->ses->ns.pagesize;
     size_t statsize = q->ses->ns.maxppq * sizeof(unvme_piostat_t);
@@ -105,71 +133,83 @@ static void datapool_map(client_queue_t* q, int vfid, int qid)
  * Unmap the client server interface.
  * @param   q           client queue
  */
-static void datapool_unmap(client_queue_t* q)
+static inline void datapool_unmap(unvme_queue_t* q)
 {
     shm_unmap(q->datapool.sf);
 }
 
 /**
  * Open a client session.
- * @param   ses         session
- * @param   vfid        vfio id
+ * @param   vfid        vfio device id
  * @param   nsid        namespace id
- * @return  0 if ok else -1.
+ * @param   qcount      queue count
+ * @param   qsize       queue size
+ * @return  newly created session
  */
-int client_open(client_session_t* ses, int vfid, int nsid)
+unvme_session_t* client_open(int vfid, int nsid, int qcount, int qsize)
 {
-    if (!client.ses) csif_map(&client.csifadm, vfid, 0);
+    if (!client.csif.msgbuf) csif_map(&client.csif, NULL, vfid);
 
-    unvme_msg_t* msg = client.csifadm.msg;
+    unvme_msg_t* msg = client.csif.msgbuf;
     msg->cmd = UNVME_CMD_OPEN;
-    msg->cpid = client.cpid;
+    msg->cpid = getpid();
     msg->nsid = nsid;
-    msg->qcount = ses->qcount;
-    msg->qsize = ses->qsize;
-    if (csif_cmd(&client.csifadm) || msg->stat) return -1;
+    msg->qcount = qcount;
+    msg->qsize = qsize;
+    csif_send(&client.csif, msg);
+    if (msg->stat) return NULL;
 
+    unvme_session_t* ses = zalloc(sizeof(unvme_session_t) +
+                                  sizeof(unvme_queue_t) * qcount);
+    ses->queues = (unvme_queue_t*)(ses + 1);
+    ses->id = msg->sid;
+    ses->cpid = msg->cpid;
+    ses->qcount = qcount;
+    ses->qsize = qsize;
     memcpy(&ses->ns, &msg->ns, sizeof(unvme_ns_t));
-    memcpy(ses->ns.model, msg->ns.model, sizeof(ses->ns.model));
     ses->ns.ses = ses;
 
     int i;
-    int nvqid = msg->nvqid;
-    for (i = 0; i < ses->qcount; i++, nvqid++) {
-        client_queue_t* q = &ses->queues[i];
-        q->id = i;
-        q->ses = ses;
-        q->nvqid = nvqid;
-        csif_map(&q->csif, vfid, nvqid);
-        datapool_map(q, vfid, nvqid);
+    for (i = 0; i < ses->qcount; i++) {
+        ses->queues[i].ses = ses;
+        datapool_map(ses->queues + i, vfid, ses->id + i);
+    }
+    csif_map(&ses->csif, ses, vfid);
+
+    if (!client.ses) {
+        client.ses = ses;
+        ses->next = ses;
+        ses->prev = ses;
+    } else {
+        ses->next = client.ses;
+        ses->prev = client.ses->prev;
+        client.ses->prev->next = ses;
+        client.ses->prev = ses;
     }
 
-    return 0;
+    return ses;
 }
 
 /**
  * Close a client session and delete all its io queues.
- * @param   ses         session
+ * @param   ns          namespace
  * @return  0 if ok else -1.
  */
-int client_close(client_session_t* ses)
+int client_close(const unvme_ns_t* ns)
 {
-    unvme_msg_t* msg = client.csifadm.msg;
+    unvme_session_t* ses = ns->ses;
+    unvme_msg_t* msg = client.csif.msgbuf;
     msg->cmd = UNVME_CMD_CLOSE;
-    msg->cpid = client.cpid;
-    msg->nvqid = ses->queues[0].nvqid;
+    msg->cpid = ses->cpid;
+    msg->sid = ses->id;
+    csif_send(&client.csif, msg);
+    if (msg->stat) return -1;
 
-    if (csif_cmd(&client.csifadm) || msg->stat) return -1;
-
+    csif_unmap(&ses->csif);
     int i;
-    for (i = 0; i < ses->qcount; i++) {
-        client_queue_t* q = &ses->queues[i];
-        datapool_unmap(q);
-        csif_unmap(&q->csif);
-    }
+    for (i = 0; i < ses->qcount; i++) datapool_unmap(ses->queues + i);
 
-    if (ses->next == ses) {
-        csif_unmap(&client.csifadm);
+    if (ses == ses->next) {
         client.ses = NULL;
     } else {
         ses->next->prev = ses->prev;
@@ -177,27 +217,32 @@ int client_close(client_session_t* ses)
         if (client.ses == ses) client.ses = ses->next;
     }
 
+    free(ses);
     return 0;
 }
 
 /**
  * Allocate a client page entry.
- * @param   q           client queue
+ * @param   ns          namespace
  * @param   pal         client page entry
  * @return  0 if ok else -1.
  */
-int client_alloc(client_queue_t* q, client_pal_t* pal)
+int client_alloc(const unvme_ns_t* ns, unvme_pal_t* pal)
 {
-    unvme_msg_t* msg = q->csif.msg;
+    unvme_session_t* ses = ns->ses;
+    unvme_csif_t* csif = &ses->csif;
     unvme_page_t* p = pal->pa;
+    int qid = p->qid;
+    unvme_msg_t* msg = csif->msgbuf + qid * csif->msglen;
     int i;
     for (i = 0; i < pal->count; i++) {
         msg->cmd = UNVME_CMD_ALLOC;
-        if (csif_cmd(&q->csif) || msg->stat) return -1;
+        csif_post(csif, qid, msg);
+        if (msg->stat) return -1;
         p->id = msg->pgid;
-        p->qid = q->id;
-        p->nlb = q->ses->ns.nbpp;
-        p->buf = q->datapool.sf->buf + p->id * q->ses->ns.pagesize;
+        p->qid = qid;
+        p->nlb = ns->nbpp;
+        p->buf = ses->queues[qid].datapool.sf->buf + p->id * ns->pagesize;
         p++;
     }
     return 0;
@@ -205,18 +250,22 @@ int client_alloc(client_queue_t* q, client_pal_t* pal)
 
 /**
  * Free a client page entry.
- * @param   q           client queue
+ * @param   ns          namespace
  * @param   pal         client page entry
  * @return  0 if ok else -1.
  */
-int client_free(client_queue_t* q, client_pal_t* pal)
+int client_free(const unvme_ns_t* ns, unvme_pal_t* pal)
 {
+    unvme_session_t* ses = ns->ses;
+    unvme_csif_t* csif = &ses->csif;
+    int qid = pal->pa->qid;
+    unvme_msg_t* msg = csif->msgbuf + qid * csif->msglen;
     int i;
-    unvme_msg_t* msg = q->csif.msg;
     for (i = 0; i < pal->count; i++) {
-        msg->cmd = UNVME_CMD_FREE;
         msg->pgid = pal->pa[i].id;
-        if (csif_cmd(&q->csif) || msg->stat) return -1;
+        msg->cmd = UNVME_CMD_FREE;
+        csif_post(csif, qid, msg);
+        if (msg->stat) return -1;
     }
     return 0;
 }
@@ -230,43 +279,15 @@ int client_free(client_queue_t* q, client_pal_t* pal)
  */
 int client_rw(const unvme_ns_t* ns, unvme_page_t* pa, int opc)
 {
-    client_queue_t* q = &((client_session_t*)(ns->ses))->queues[pa->qid];
-    int ustat = q->datapool.piostat[pa->id].ustat;
-    if (ustat != UNVME_PS_READY) {
-        ERROR("page %d is busy stat=%d", pa->id, ustat);
-        return -1;
-    }
-    q->datapool.piostat[pa->id].cpa = pa;
-    unvme_msg_t* msg = q->csif.msg;
+    unvme_session_t* ses = ns->ses;
+    unvme_csif_t* csif = &ses->csif;
+    int qid = pa->qid;
+    unvme_msg_t* msg = csif->msgbuf + qid * csif->msglen;
+    ses->queues[qid].datapool.piostat[pa->id].cpa = pa;
     msg->cmd = opc;
     int numpages = (pa->nlb + ns->nbpp - 1) / ns->nbpp;
     memcpy(msg->pa, pa, numpages * sizeof(unvme_page_t));
-    return csif_cmd(&q->csif);
-}
-
-/**
- * Poll and wait for a specific page io completion in a queue.
- * @param   ns          namespace handle
- * @param   pa          page array
- * @param   sec         number of seconds to wait before timeout
- * @return  pointer to the page array completed or NULL if timeout.
- */
-unvme_page_t* unvme_poll(const unvme_ns_t* ns, unvme_page_t* pa, int sec)
-{
-    client_queue_t* q = &((client_session_t*)(ns->ses))->queues[pa->qid];
-    return unvme_tpc_poll(&q->datapool, pa, sec);
-}
-
-/**
- * Poll and wait for any page io completion in the specified queue.
- * @param   ns          namespace handle
- * @param   qid         client queue id
- * @param   sec         number of seconds to poll before timeout
- * @return  pointer to the page array completed or NULL if timeout.
- */
-unvme_page_t* unvme_apoll(const unvme_ns_t* ns, int qid, int sec)
-{
-    client_queue_t* q = &((client_session_t*)(ns->ses))->queues[qid];
-    return unvme_tpc_apoll(&q->datapool, sec);
+    csif_post(csif, qid, msg);
+    return 0;
 }
 

@@ -36,51 +36,27 @@
 
 #include "unvme.h"
 
-/// APC library model
+/// TPC library model
 int unvme_model = UNVME_MODEL_TPC;
 
 
 /**
- * Create IO queue model extended function.
- * @param   ioq         io queue
+ * Create session extended function for the model.
+ * @param   ses         session
+ * @return  0 if ok else -1.
  */
-void unvme_ioq_create_ext(unvme_queue_t* ioq)
+void unvme_session_create_ext(unvme_session_t* ses)
 {
-    unvme_tpc_create(ioq);
+    unvme_tpc_create(ses);
 }
 
 /**
- * Delete IO queue model extended function.
- * @param   ioq         io queue
+ * Delete session extended function for the model.
+ * @param   ses         session
+ * @return  0 if ok else -1.
  */
-void unvme_ioq_delete_ext(unvme_queue_t* ioq)
+void unvme_session_delete_ext(unvme_session_t* ses)
 {
-    unvme_tpc_delete(ioq);
-}
-
-/**
- * Poll and wait for a specific page io completion in a queue.
- * @param   ns          namespace handle
- * @param   pa          page array
- * @param   sec         number of seconds to wait before timeout
- * @return  pointer to the page array completed or NULL if timeout.
- */
-unvme_page_t* unvme_poll(const unvme_ns_t* ns, unvme_page_t* pa, int sec)
-{
-    unvme_queue_t* q = ((client_session_t*)(ns->ses))->queues[pa->qid].ioq;
-    return unvme_tpc_poll(&q->datapool, pa, sec);
-}
-
-/**
- * Poll and wait for any page io completion in the specified queue.
- * @param   ns          namespace handle
- * @param   qid         client queue id
- * @param   sec         number of seconds to poll before timeout
- * @return  pointer to the page array completed or NULL if timeout.
- */
-unvme_page_t* unvme_apoll(const unvme_ns_t* ns, int qid, int sec)
-{
-    unvme_queue_t* q = ((client_session_t*)(ns->ses))->queues[qid].ioq;
-    return unvme_tpc_apoll(&q->datapool, sec);
+    unvme_tpc_delete(ses);
 }
 

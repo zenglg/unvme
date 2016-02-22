@@ -37,6 +37,8 @@ SVC_OBJS = $(SVC_SRCS:.c=.o)
 
 default: $(TARGET_SVC) $(TARGET_LIB)
 
+$(LIB_OBJS) $(SVC_OBJS): $(INCLUDES)
+
 $(TARGET_SVC): $(SVC_OBJS)
 
 $(TARGET_LIB): $(LIB_OBJS)

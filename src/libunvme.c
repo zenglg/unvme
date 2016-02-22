@@ -36,9 +36,11 @@
 
 #include "unvme.h"
 
-// Global client variables
-client_main_t    client;                                    ///< client handle
-pthread_mutex_t  client_lock = PTHREAD_MUTEX_INITIALIZER;   ///< lock
+/// Global client info
+unvme_client_t  client = {  .lock = PTHREAD_MUTEX_INITIALIZER,
+                            .csif = { 0 },
+                            .ses = NULL
+                         };
 
 
 /**
@@ -65,61 +67,30 @@ const unvme_ns_t* unvme_open(const char* vfioname, int nsid, int qcount, int qsi
         return NULL;
     }
 
-    // allocating client queues
-    client_session_t* ses = zalloc(sizeof(client_session_t));
-    ses->queues = zalloc(qcount * sizeof(client_queue_t));
-    ses->qcount = qcount;
-    ses->qsize = qsize;
-
-    // invoke open
-    pthread_mutex_lock(&client_lock);
-    if (!client.cpid) client.cpid = getpid();
-
-    if (client_open(ses, vfid, nsid)) {
-        pthread_mutex_unlock(&client_lock);
-        free(ses->queues);
-        free(ses);
-        return NULL;
-    }
-
-    // add client session to the global list
-    if (!client.ses) {
-        client.ses = ses;
-        ses->prev = ses->next = ses;
-    } else {
-        ses->prev = client.ses->prev;
-        ses->next = client.ses;
-        client.ses->prev->next = ses;
-        client.ses->prev = ses;
-    }
-
-    pthread_mutex_unlock(&client_lock);
-    return &ses->ns;
+    pthread_mutex_lock(&client.lock);
+    unvme_session_t* ses = client_open(vfid, nsid, qcount, qsize);
+    if (ses && !client.ses) client.ses = ses;
+    pthread_mutex_unlock(&client.lock);
+    return ses ? &ses->ns : NULL;
 }
 
 /**
- * Close a client session and delete all its io queues.
+ * Close a client session and delete its contained io queues.
  * @param   ns          namespace handle
  * @return  0 if ok else error code.
  */
 int unvme_close(const unvme_ns_t* ns)
 {
-    client_session_t* ses = (client_session_t*)ns->ses;
+    unvme_session_t* ses = (unvme_session_t*)ns->ses;
 
-    pthread_mutex_lock(&client_lock);
-    // free all pages in session queues
+    pthread_mutex_lock(&client.lock);
+    // free all the allocated pages in the session
     int i;
     for (i = 0; i < ses->qcount; i++) {
-        client_queue_t* q = &ses->queues[i];
-        while (q->pal) {
-            unvme_free(ns, q->pal->pa);
-        }
+        while (ses->queues[i].pal) unvme_free(ns, ses->queues[i].pal->pa);
     }
-    client_close(ses);
-    pthread_mutex_unlock(&client_lock);
-
-    free(ses->queues);
-    free(ses);
+    client_close(ns);
+    pthread_mutex_unlock(&client.lock);
     return 0;
 }
 
@@ -132,37 +103,38 @@ int unvme_close(const unvme_ns_t* ns)
  */
 unvme_page_t* unvme_alloc(const unvme_ns_t* ns, int qid, int numpages)
 {
-    client_queue_t* q = &((client_session_t*)(ns->ses))->queues[qid];
+    unvme_queue_t* ioq = ((unvme_session_t*)(ns->ses))->queues + qid;
 
     if (numpages == 0) return NULL;
-    if ((q->pac + numpages) > ns->maxppq) {
+    if ((ioq->pac + numpages) > ns->maxppq) {
         ERROR("%d will exceed queue limit of %d pages", numpages, ns->maxppq);
         return NULL;
     }
 
     // allocate the page array
-    client_pal_t* pal = zalloc(sizeof(client_pal_t) +
+    unvme_pal_t* pal = zalloc(sizeof(unvme_pal_t) +
                                numpages * sizeof(unvme_page_t));
     pal->pa = (unvme_page_t*)(pal + 1);
     pal->count = numpages;
+    pal->pa->qid = qid;
 
-    if (client_alloc(q, pal)) {
+    if (client_alloc(ns, pal)) {
         free(pal);
         return NULL;
     }
 
     // add to the page allocation track list
-    if (!q->pal) {
-        q->pal = pal;
+    if (!ioq->pal) {
+        ioq->pal = pal;
         pal->prev = pal->next = pal;
     } else {
-        pal->prev = q->pal->prev;
-        pal->next = q->pal;
-        q->pal->prev->next = pal;
-        q->pal->prev = pal;
+        pal->prev = ioq->pal->prev;
+        pal->next = ioq->pal;
+        ioq->pal->prev->next = pal;
+        ioq->pal->prev = pal;
     }
 
-    q->pac += pal->count;
+    ioq->pac += pal->count;
     return pal->pa;
 }
 
@@ -174,23 +146,19 @@ unvme_page_t* unvme_alloc(const unvme_ns_t* ns, int qid, int numpages)
  */
 int unvme_free(const unvme_ns_t* ns, unvme_page_t* pa)
 {
-    client_queue_t* q = &((client_session_t*)(ns->ses))->queues[pa->qid];
-    if (!q->pal) return -1;
-
-    // search in the page allocation list
-    client_pal_t* pal = q->pal;
-    while ((pal->pa != pa) && (pal->next != q->pal)) pal = pal->next;
-    if (pal->pa != pa || client_free(q, pal)) return -1;
+    unvme_queue_t* ioq = ((unvme_session_t*)(ns->ses))->queues + pa->qid;
+    unvme_pal_t* pal = (unvme_pal_t*)pa - 1;
+    if (!ioq->pal || pal->pa != pa || client_free(ns, pal)) return -1;
 
     // remove from the page allocation entry
     if (pal->next == pal) {
-        q->pal = NULL;
+        ioq->pal = NULL;
     } else {
         pal->next->prev = pal->prev;
         pal->prev->next = pal->next;
-        if (q->pal == pal) q->pal = pal->next;
+        if (ioq->pal == pal) ioq->pal = pal->next;
     }
-    q->pac -= pal->count;
+    ioq->pac -= pal->count;
 
     free(pal);
     return 0;
@@ -243,4 +211,3 @@ int unvme_awrite(const unvme_ns_t* ns, unvme_page_t* pa)
 {
     return client_rw(ns, pa, NVME_CMD_WRITE);
 }
-

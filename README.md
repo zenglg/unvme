@@ -2,7 +2,7 @@ UNVMe - A User Space NVMe Driver Project
 ========================================
 
 UNVMe is a user space NVMe driver developed at Micron Technology for the
-purpose of benchmarking different polling models in comparing to the
+purpose of benchmarking different polling models in comparison to the
 kernel space NVMe driver interupt driven model.
 
 The UNVMe driver depends on features provided by the vfio module in the
@@ -15,31 +15,31 @@ In this project, UNVMe is implemented as three distinct models:
 
     model_apc   -   Using this library model, the application will have
                     exclusive access to an NVMe device, where the application
-                    thread will process the completion queue at the time
-                    of checking for a submitted I/O status.
+                    will process the completion queue at the time of checking
+                    for I/O status.
 
     model_tpc   -   Using this library model, the application will have
-                    exclusive access to an NVMe device, where the built-in
+                    exclusive access to an NVMe device, where a built-in
                     thread pool will automatically process IO completion,
                     and the application can later check for I/O status.
 
     model_cs    -   Using the client/server model, the driver will run
                     as a background service to manage a set of NVMe devices
                     and receive requests from client applications.
-                    An application which runs on a separate process, and
-                    via the library APIs, it sends request to the driver
-                    This model is similar to the traditional driver model
-                    which allows one or more applications to access a device.
+                    An application which runs in a separate process can
+                    send requests to the driver.  This model is similar to
+                    the traditional driver model which allows one or more
+                    applications to access a device.
 
-A selected model can be built by specifying its target, and all three models
-export the same set of library APIs.
+A selected model can be built by specifying the named target.
+All three models export the same set of library APIs.
 
 It should be noted that the UNVMe interface is designed to allow the user
 to create specified number of I/O submission-completion queue pairs.
 The queues will be created exclusively for and when a session is opened.
-For multi-threaded applications, a thread can perform I/O on one or more
-queues, but a queue must only be accessed by a single thread in order to
-guarantee thread-safe operations.
+For multi-threaded applications, an application thread can perform I/O on
+one or more queues, but a queue must only be accessed by a single thread
+in order to guarantee thread-safe operations.
 
 
 System Requirements
@@ -68,11 +68,6 @@ based systems with vfio support which requires the following features:
 Build and Run
 =============
 
-The Makefile.def file is provided for the user to specify the default
-model to build when running:
-
-    $ make
-
 A specific model can also be built by explicitly specifying the one of the
 following targets:
 
@@ -80,30 +75,37 @@ following targets:
     $ make model_tpc
     $ make model_cs
 
+The Makefile.def file is provided for the user to specify the default
+model to build when running:
+
+    $ make
+
 Make will keep track of the last model built and will default to that model
 before using the DEFAULT_MODEL setting in Makefile.def.
 
-When building model_apc or model_tpc, make will produce the 'libunvme.a'
-library.  When building the model_cs, make will also produce a 'unvme'
-executable to be run as a service.
+When building model_apc or model_tpc, make will produce a 'libunvme.a'
+library.  When building the model_cs, make will produce a 'libunvme.a' 
+library and a 'unvme' executable which is the driver to be run as a service.
 
 
-Before running any UNVMe application, the user must run the setup script once
-to bind the devices to vfio using the following command:
+If the model_cs is built, then the service needs to be run specifying
+a list of mapped vfio devices as its arguments, i.e. prior to applications.
+For example:
+
+    $ src/unvme /dev/vfio/X /dev/vfio/Y ...
+
+The UNVMe runtime log messages will be saved in /dev/shm/unvme.log.
+
+
+Before running the UNVMe service or applications, the user must first run
+the setup script once to bind the NVMe to vfio devices using the following
+command:
 
     $ test/unvme-setup
 
 To reset the devices to the default NVMe kernel space drivers, run command:
 
     $ test/unvme-setup reset
-
-
-If model_cs is built, then the service needs to be run first with a list of
-mapped vfio devices as its arguments.  For example:
-
-    $ src/unvme /dev/vfio/X /dev/vfio/Y ...
-
-The UNVMe runtime log messages are saved in /dev/shm/unvme.log.
 
 
 Applications and Tests
@@ -113,8 +115,8 @@ Applications can be built using the libunvme.h and libunvme.a interfaces.
 The library provides APIs for both UNVMe and direct NVMe command access
 with vfio functions support for DMA memory allocation.  
 
-Examples of both UNVMe and NVMe level testing are provided under the
-test directory.
+Examples of both UNVMe and NVMe level testing are provided under the test
+directory.
 
 UNVMe test applications can be run as:
 
@@ -138,20 +140,16 @@ Benchmark
 
 UNVMe has been benchmarked with fio (Flexible I/O Tester) using the test
 script test/unvme-benchmark.  The ioengine/unvme_fio is provided for
-this purpose.  In order to build the unvme_fio engine, the user must set
-the FIO_DIR variable to point to the fio source path in the Makefile.def
-file, or specify in the make command line as:
+this purpose.  In order to build the unvme_fio engine, the user must either
+set the FIO_DIR variable to point to the fio source path in the Makefile.def
+or specify FIO_DIR on the make command line as:
 
     $ FIO_DIR=/path/fio make model_apc
 
 
-To setup for UNVMe usage, run:
-
-    $ test/unvme-setup
-
-
 To produce benchmark results for UNVMe model_apc, run:
 
+    $ test/unvme-setup  # only need to be done once if has not
     $ make model_apc
     $ OUTDIR=out/apc test/unvme-benchmark /dev/vfio/X
 
@@ -175,16 +173,22 @@ To reset and get benchmark results for the NVMe kernel space driver, run:
 
 Notes:
 
-    + The variable OUTDIR can be specified as a directory relative to the
-      test directory where the benchmark results are to be saved.
-      If not specified, the output directory will be default to test/out.
-
     + The unvme-benchmark script will run fio tests for random read and
       random write using 1, 4, 8, and 16 jobs (threads) and iodepth of
       1, 4, 8, 16, 32, and 64.
 
     + For UNVMe, the number of fio jobs will be translated to number of
       queues and the queue size is set to iodepth + 1.
+
+    + The default output directory will be "out" relative to the test
+      directory and can be overriden by specifying OUTDIR on the
+      shell commandl ine.
+
+    + If FIO_DIR is not set in Makefile.def then the FIODIR variable
+      must be specified on the shell command line.  
+
+    + If nsid is other than 1, the variable NSID must be specified on the
+      shell command line.
 
 
 Documentation
