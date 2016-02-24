@@ -147,13 +147,15 @@ static void unvme_ioq_create(unvme_session_t* ses, int sqi)
  */
 static void unvme_ioq_delete(unvme_queue_t* ioq)
 {
-    DEBUG_FN("q=%d", ioq->nvq->id);
+    unvme_session_t* ses = ioq->ses;
+
+    DEBUG_FN("%d: q=%d", ses->dev->vfiodev->id, ioq->nvq->id);
     if (nvme_delete_ioq(ioq->nvq) ||
         vfio_dma_free(ioq->cqdma) || vfio_dma_free(ioq->sqdma)) FATAL();
 
     unvme_datapool_free(ioq);
-    ioq->ses->dev->numioqs--;
-    INFO_FN("q=%d qc=%d", ioq->nvq->id, ioq->ses->dev->numioqs);
+    ses->dev->numioqs--;
+    INFO_FN("%d: q=%d qc=%d", ses->dev->vfiodev->id, ioq->nvq->id, ses->dev->numioqs);
 }
 
 /**
@@ -381,7 +383,7 @@ int unvme_do_close(unvme_device_t* dev, pid_t cpid, int sid)
         }
     }
     ses = dev->ses->prev;
-    INFO_FN("last qid %d", ses->queues[ses->qcount-1].nvq->id);
+    INFO_FN("%d: last qid %d", dev->vfiodev->id, ses->queues[ses->qcount-1].nvq->id);
     if (unvme_model != UNVME_MODEL_CS && ses == ses->next) unvme_cleanup();
     return 0;
 }

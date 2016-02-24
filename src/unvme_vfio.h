@@ -49,21 +49,19 @@ typedef struct _vfio_dma {
     void*                   id;         ///< private id
 } vfio_dma_t;
 
-/// VFIO context
+/// VFIO device structure
 typedef struct _vfio_device {
-    int                     id;         ///< group id
+    int                     id;         ///< device id
     int                     fd;         ///< device descriptor
-    int                     groupfd;    ///< group file descriptor
-    int                     contfd;     ///< container file descriptor
 } vfio_device_t;
 
 
 // Export functions
 vfio_device_t* vfio_create(int vfid);
-void vfio_delete(vfio_device_t* dev);
-vfio_dma_t* vfio_dma_map(vfio_device_t* dev, size_t size, void* pmb);
+void vfio_delete(vfio_device_t* vdev);
+vfio_dma_t* vfio_dma_map(vfio_device_t* vdev, size_t size, void* pmb);
 int vfio_dma_unmap(vfio_dma_t* dma);
-vfio_dma_t* vfio_dma_alloc(vfio_device_t* dev, size_t size);
+vfio_dma_t* vfio_dma_alloc(vfio_device_t* vdev, size_t size);
 int vfio_dma_free(vfio_dma_t* dma);
 
 #endif // _UNVME_VFIO_H

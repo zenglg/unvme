@@ -72,7 +72,7 @@ model_apc model_tpc model_cs: model
 %.i: %.c
 	$(CPP) $(CPPFLAGS) -o $@ $<
 
-lint: COPT = -D_FORTIFY_SOURCE=2 -DUNVME_DEBUG -O2
+lint: COPT = -D_FORTIFY_SOURCE=2 -DUNVME_DEBUG -O3
 lint: clean $(OBJS)
 	@$(RM) *.o
 

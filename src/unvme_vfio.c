@@ -47,12 +47,17 @@
 #include "unvme_vfio.h"
 #include "unvme_log.h"
 
-/// Adjust page size to 4K page aligned size
-#define PA_SIZE(n)          (((n) + 0xfff) & ~0xfff)
+/// Starting device DMA address
+#define VFIO_IOVA           0x8800000000
+
+/// Adjust to 4K page aligned size
+#define VFIO_PASIZE(n)      (((n) + 0xfff) & ~0xfff)
+
+struct _vfio_dev;
 
 /// VFIO memory allocation entry
 typedef struct _vfio_mem {
-    int                     fd;         ///< associated device descriptor
+    struct _vfio_dev*       dev;        ///< device ownder
     int                     mmap;       ///< mmap indication flag
     vfio_dma_t              dma;        ///< dma mapped memory
     size_t                  nelems;     ///< number of elements
@@ -61,11 +66,16 @@ typedef struct _vfio_mem {
     struct _vfio_mem*       next;       ///< next entry
 } vfio_mem_t;
 
-
-// Static global variables
-static __u64                vfio_iova = 0x8800000000; ///< starting DMA address
-static vfio_mem_t*          vfio_mlist;             ///< memory allocated list
-static pthread_mutex_t      vfio_mutex = PTHREAD_MUTEX_INITIALIZER; ///< memory list mutex
+/// VFIO actual device context
+typedef struct _vfio_dev {
+    int                     id;         ///< device id
+    int                     fd;         ///< device descriptor
+    int                     groupfd;    ///< group file descriptor
+    int                     contfd;     ///< container file descriptor
+    __u64                   iova;       ///< next DMA (virtual IO) address
+    vfio_mem_t*             memlist;    ///< memory allocated list
+    pthread_spinlock_t      lock;       ///< multithreaded lock
+} vfio_dev_t;
 
 
 /**
@@ -76,7 +86,7 @@ static pthread_mutex_t      vfio_mutex = PTHREAD_MUTEX_INITIALIZER; ///< memory 
  * @param   off         offset
  * @return  0 if ok, else -1.
  */
-static int vfio_read(vfio_device_t* dev, void* buf, size_t len, off_t off)
+static int vfio_read(vfio_dev_t* dev, void* buf, size_t len, off_t off)
 {
     if (pread(dev->fd, buf, len, off) != len) {
         ERROR("pread(off=%#lx len=%lu)", off, len);
@@ -93,7 +103,7 @@ static int vfio_read(vfio_device_t* dev, void* buf, size_t len, off_t off)
  * @param   off         offset
  * @return  0 if ok, else -1.
  */
-static int vfio_write(vfio_device_t* dev, void* buf, size_t len, off_t off)
+static int vfio_write(vfio_dev_t* dev, void* buf, size_t len, off_t off)
 {
     if (pwrite(dev->fd, buf, len, off) != len) {
         ERROR("pwrite(off=%#lx len=%lu)", off, len);
@@ -106,27 +116,20 @@ static int vfio_write(vfio_device_t* dev, void* buf, size_t len, off_t off)
  * Allocate a VFIO memory array of specified number of elements and size.
  * The pmb value, if non-zero, indicates that the array has already
  * been allocated (via mmap) and only need to be mapped to DMA address.
- * @param   dev         device context
+ * @param   vdev        device context
  * @param   nelems      number of array elements
  * @param   elsize      element size
  * @param   pmb         premapped buffer
  * @return  memory structure pointer or NULL if error.
  */
-static vfio_mem_t* vfio_mem_alloc(vfio_device_t* dev,
+static vfio_mem_t* vfio_mem_alloc(vfio_device_t* vdev,
                                   size_t nelems, size_t elsize, void* pmb)
 {
-    struct vfio_iommu_type1_dma_map map = {
-        .argsz = sizeof(map),
-        .iova = vfio_iova,
-        .flags = (VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE),
-    };
-
     vfio_mem_t* mem = zalloc(sizeof(*mem));
-
-    // allocate and map dma memory
     mem->nelems = nelems;
     mem->elsize = elsize;
-    size_t size = PA_SIZE(nelems * elsize);
+    size_t size = VFIO_PASIZE(nelems * elsize);
+
     if (pmb) {
         mem->dma.buf = pmb;
     } else {
@@ -137,31 +140,43 @@ static vfio_mem_t* vfio_mem_alloc(vfio_device_t* dev,
         }
         mem->mmap = 1;
     }
-    map.size = (__u64)size;
-    map.vaddr = (__u64)mem->dma.buf;
+
+    vfio_dev_t* dev = (vfio_dev_t*)vdev;
+
+    pthread_spin_lock(&dev->lock);
+    struct vfio_iommu_type1_dma_map map = {
+        .argsz = sizeof(map),
+        .flags = (VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE),
+        .size = (__u64)size,
+        .iova = dev->iova,
+        .vaddr = (__u64)mem->dma.buf,
+    };
+
     if (ioctl(dev->contfd, VFIO_IOMMU_MAP_DMA, &map) < 0) {
         ERROR("ioctl VFIO_IOMMU_MAP_DMA errno %d", errno);
+        pthread_spin_unlock(&dev->lock);
         goto error;
     }
     mem->dma.size = size;
     mem->dma.addr = map.iova;
     mem->dma.id = mem;
-    mem->fd = dev->contfd;
+    mem->dev = dev;
 
     // add node to the memory list
-    pthread_mutex_lock(&vfio_mutex);
-    if (!vfio_mlist) {
+    if (!dev->memlist) {
         mem->prev = mem;
         mem->next = mem;
-        vfio_mlist = mem;
+        dev->memlist = mem;
     } else {
-        mem->prev = vfio_mlist->prev;
-        mem->next = vfio_mlist;
-        vfio_mlist->prev->next = mem;
-        vfio_mlist->prev = mem;
+        mem->prev = dev->memlist->prev;
+        mem->next = dev->memlist;
+        dev->memlist->prev->next = mem;
+        dev->memlist->prev = mem;
     }
-    vfio_iova = map.iova + size;
-    pthread_mutex_unlock(&vfio_mutex);
+    dev->iova = map.iova + size;
+    DEBUG_FN("%d: %#lx %ld %#lx", dev->id, map.iova, map.size, dev->iova);
+    pthread_spin_unlock(&dev->lock);
+
     return mem;
 
 error:
@@ -177,19 +192,17 @@ error:
  */
 static int vfio_mem_free(vfio_mem_t* mem)
 {
-    if (!vfio_mlist) {
-        ERROR("invalid reference");
-        return -1;
-    }
+    vfio_dev_t* dev = mem->dev;
+
+    struct vfio_iommu_type1_dma_unmap unmap = {
+        .argsz = sizeof(unmap),
+        .size = (__u64)mem->dma.size,
+        .iova = mem->dma.addr,
+    };
 
     // unmap and free dma memory
     if (mem->dma.buf) {
-        struct vfio_iommu_type1_dma_unmap unmap = {
-            .argsz = sizeof(unmap),
-            .size = (__u64)mem->dma.size,
-            .iova = mem->dma.addr,
-        };
-        if (ioctl(mem->fd, VFIO_IOMMU_UNMAP_DMA, &unmap) < 0) {
+        if (ioctl(dev->contfd, VFIO_IOMMU_UNMAP_DMA, &unmap) < 0) {
             ERROR("ioctl VFIO_IOMMU_MAP_DMA errno %d", errno);
             return -1;
         }
@@ -202,16 +215,20 @@ static int vfio_mem_free(vfio_mem_t* mem)
     }
 
     // remove node from memory list
-    pthread_mutex_lock(&vfio_mutex);
-    if (mem->next == vfio_mlist) vfio_iova -= mem->dma.size;
+    pthread_spin_lock(&dev->lock);
+    if (mem->next == dev->memlist) dev->iova -= mem->dma.size;
     if (mem->next == mem) {
-        vfio_mlist = NULL;
+        dev->memlist = NULL;
+        dev->iova = VFIO_IOVA;
     } else {
         mem->next->prev = mem->prev;
         mem->prev->next = mem->next;
-        if (vfio_mlist == mem) vfio_mlist = mem->next;
+        if (dev->memlist == mem) dev->memlist = mem->next;
+        dev->iova = dev->memlist->prev->dma.addr + dev->memlist->prev->dma.size;
     }
-    pthread_mutex_unlock(&vfio_mutex);
+    DEBUG_FN("%d: %#lx %ld %#lx", dev->id, unmap.iova, unmap.size, dev->iova);
+    pthread_spin_unlock(&dev->lock);
+
     free(mem);
     return 0;
 }
@@ -227,9 +244,11 @@ vfio_device_t* vfio_create(int vfid)
     struct vfio_iommu_type1_info iommu_info = { .argsz = sizeof(iommu_info) };
     struct vfio_device_info dev_info = { .argsz = sizeof(dev_info) };
 
-    // allocate device context
-    vfio_device_t* dev = zalloc(sizeof(*dev));
+    // allocate and initialize device context
+    vfio_dev_t* dev = zalloc(sizeof(*dev));
     dev->id = vfid;
+    dev->iova = VFIO_IOVA;
+    if (pthread_spin_init(&dev->lock, PTHREAD_PROCESS_PRIVATE)) return NULL;
 
     // map vfio context
     char path[64];
@@ -282,7 +301,7 @@ vfio_device_t* vfio_create(int vfid)
     }
     strncpy(s, des[i-1]->d_name, sizeof(s));
     while (i--) free(des[i]);
-    DEBUG_FN("vfio=%d pci=%s", dev->id, s);
+    DEBUG_FN("%d: pci=%s", dev->id, s);
 
     dev->fd = ioctl(dev->groupfd, VFIO_GROUP_GET_DEVICE_FD, s);
     if (dev->fd < 0) {
@@ -294,7 +313,7 @@ vfio_device_t* vfio_create(int vfid)
     if (ioctl(dev->fd, VFIO_DEVICE_GET_INFO, &dev_info) < 0) {
         ERROR("ioctl VFIO_DEVICE_GET_INFO");
     }
-    DEBUG_FN("vfio=%d flags=%u regions=%u irqs=%u",
+    DEBUG_FN("%d: flags=%u regions=%u irqs=%u",
              dev->id, dev_info.flags, dev_info.num_regions, dev_info.num_irqs);
 
     for (i = 0; i < dev_info.num_regions; i++) {
@@ -303,7 +322,7 @@ vfio_device_t* vfio_create(int vfid)
 
         if (ioctl(dev->fd, VFIO_DEVICE_GET_REGION_INFO, &reg)) continue;
 
-        DEBUG_FN("vfio=%d region=%d flags=%u resv=%u off=%#llx size=%#llx",
+        DEBUG_FN("%d: region=%d flags=%u resv=%u off=%#llx size=%#llx",
                  dev->id, reg.index, reg.flags, reg.resv, reg.offset, reg.size);
 
         if (i == VFIO_PCI_CONFIG_REGION_INDEX) {
@@ -312,7 +331,7 @@ vfio_device_t* vfio_create(int vfid)
             __u16* vendor = (__u16*)(s + PCI_VENDOR_ID);
             __u16* cmd = (__u16*)(s + PCI_COMMAND);
 
-            DEBUG_FN("vfio=%d vendor=%#x device=%#x rev=%d", dev->id,
+            DEBUG_FN("%d: vendor=%#x device=%#x rev=%d", dev->id,
                      *vendor, (__u16*)(s + PCI_DEVICE_ID), s[PCI_REVISION_ID]);
             if (*vendor == 0xffff) {
                 ERROR("device in bad state");
@@ -325,22 +344,26 @@ vfio_device_t* vfio_create(int vfid)
         }
     }
 
-    return dev;
+    return (vfio_device_t*)dev;
 
 error:
-    vfio_delete(dev);
+    vfio_delete((vfio_device_t*)dev);
     return NULL;
 }
 
 /**
  * Delete a VFIO device context.
- * @param   dev         device context
+ * @param   vdev        device context
  */
-void vfio_delete(vfio_device_t* dev)
+void vfio_delete(vfio_device_t* vdev)
 {
-    if (!dev) return;
+    if (!vdev) return;
+    vfio_dev_t* dev = (vfio_dev_t*)vdev;
+    DEBUG_FN("%d", dev->id);
 
-    DEBUG_FN();
+    // free all memory associated with the device
+    while (dev->memlist) vfio_mem_free(dev->memlist);
+
     if (dev->fd) {
         close(dev->fd);
         dev->fd = 0;
@@ -353,19 +376,21 @@ void vfio_delete(vfio_device_t* dev)
         close(dev->groupfd);
         dev->groupfd = 0;
     }
+
+    pthread_spin_destroy(&dev->lock);
     free(dev);
 }
 
 /**
  * Map a premapped buffer and return a DMA buffer.
- * @param   dev         device context
+ * @param   vdev        device context
  * @param   size        allocation size
  * @param   pmb         premapped buffer
  * @return  0 if ok else -1.
  */
-vfio_dma_t* vfio_dma_map(vfio_device_t* dev, size_t size, void* pmb)
+vfio_dma_t* vfio_dma_map(vfio_device_t* vdev, size_t size, void* pmb)
 {
-    vfio_mem_t* mem = vfio_mem_alloc(dev, 1, size, pmb);
+    vfio_mem_t* mem = vfio_mem_alloc(vdev, 1, size, pmb);
     return mem ? &mem->dma : NULL;
 }
 
@@ -381,13 +406,13 @@ int vfio_dma_unmap(vfio_dma_t* dma)
 
 /**
  * Allocate and return a DMA buffer.
- * @param   dev         device context
+ * @param   vdev        device context
  * @param   size        allocation size
  * @return  0 if ok else -1.
  */
-vfio_dma_t* vfio_dma_alloc(vfio_device_t* dev, size_t size)
+vfio_dma_t* vfio_dma_alloc(vfio_device_t* vdev, size_t size)
 {
-    vfio_mem_t* mem = vfio_mem_alloc(dev, 1, size, 0);
+    vfio_mem_t* mem = vfio_mem_alloc(vdev, 1, size, 0);
     return mem ? &mem->dma : NULL;
 }
 
