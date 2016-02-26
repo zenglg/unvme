@@ -232,9 +232,7 @@ int main(int argc, char* argv[])
             break;
         case 'd':
             qsize = atoi(optarg);
-            if (qsize < 2) {
-                error(1, 0, "qsize must be > 1");
-            }
+            if (qsize < 2) error(1, 0, "qsize must be > 1");
             break;
         case 'm':
             minbpio = atoi(optarg);

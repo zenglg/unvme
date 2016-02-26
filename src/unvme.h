@@ -119,6 +119,7 @@ typedef struct _unvme_csif {
     pthread_t               thread;     ///< thread array
     int                     stop;       ///< thread stop flag
     shm_file_t*             sf;         ///< shared memory file
+    pthread_spinlock_t*     lock;       ///< client queue lock
     sem_t*                  sem;        ///< shared request semaphore
     int                     msglen;     ///< message length
     void*                   msgbuf;     ///< shared message buffer array
@@ -127,7 +128,6 @@ typedef struct _unvme_csif {
     int*                    mqhead;     ///< shared message queue head
     int*                    mqtail;     ///< shared message queue tail
     int*                    mq;         ///< shared message queue
-    pthread_spinlock_t      mqlock;     ///< message queue lock for client
 } unvme_csif_t;
 
 /// thread process completion structure

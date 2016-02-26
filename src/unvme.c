@@ -123,6 +123,10 @@ static void unvme_ioq_create(unvme_session_t* ses, int sqi)
     int nvqid = (sqi == 0 ? ses->prev->queues[ses->prev->qcount-1].nvq->id
                           : ioq[-1].nvq->id) + 1;
     if (nvqid == 0) FATAL("qid wraps to 0");
+    if (ses->id == 0) {
+        ses->id = nvqid;
+        ses->ns.sid = nvqid;
+    }
 
     ioq->sqdma = vfio_dma_alloc(dev->vfiodev, ses->qsize * sizeof(nvme_sq_entry_t));
     if (!ioq->sqdma) FATAL();
@@ -207,7 +211,7 @@ static unvme_session_t* unvme_session_create(unvme_device_t* dev, int cpid,
     if ((nsid == 0 && dev->ses) || (nsid == 0 && qcount != 1) ||
         (nsid != 0 && !dev->ses)) FATAL("nsid %d", nsid);
 
-    // alloca session and an array of queues
+    // allocate a session with its queue array
     unvme_session_t* ses = zalloc(sizeof(unvme_session_t) +
                                   sizeof(unvme_queue_t) * qcount);
     ses->queues = (unvme_queue_t*)(ses + 1);
@@ -232,10 +236,9 @@ static unvme_session_t* unvme_session_create(unvme_device_t* dev, int cpid,
         int i;
         for (i = 0; i < qcount; i++) unvme_ioq_create(ses, i);
         DEBUG_FN("%d: q=%d-%d bs=%d nb=%lu", dev->vfiodev->id,
-                 ses->queues[0].nvq->id, ses->queues[qcount-1].nvq->id,
+                 ses->id, ses->queues[qcount-1].nvq->id,
                  ses->ns.blocksize, ses->ns.blockcount);
     }
-    ses->id = ses->queues[0].nvq->id;
 
     unvme_session_create_ext(ses);
     return ses;
@@ -255,7 +258,7 @@ static void unvme_session_delete(unvme_session_t* ses)
         unvme_adminq_delete(ses->queues);
         dev->ses = NULL;
     } else {
-        DEBUG_FN("%d: q=%d-%d", dev->vfiodev->id, ses->queues[0].nvq->id,
+        DEBUG_FN("%d: q=%d-%d", dev->vfiodev->id, ses->id,
                                 ses->queues[ses->qcount-1].nvq->id);
         while (--ses->qcount >= 0) unvme_ioq_delete(&ses->queues[ses->qcount]);
         ses->next->prev = ses->prev;

@@ -30,7 +30,7 @@ rw=RW
 numjobs=QCOUNT
 iodepth=QDEPTH"
 
-: ${FIODIR=$(grep '^FIO_DIR' ../Makefile.def | sed 's/.*=\s*//')}
+: ${FIO_DIR=$(grep '^FIO_DIR' ../Makefile.def | sed 's/.*=\s*//')}
 : ${RW="randread randwrite"}
 : ${QCOUNT="01 04 08 16"}
 : ${QDEPTH="0001 0004 0008 0016 0032 0064"}
@@ -132,7 +132,7 @@ for rw in ${RW}; do
             cmd /usr/bin/free -h | tee -a ${OUTFILE}
             echo -e "\n========\n" >> ${OUTFILE}
 
-            cmd ${FIODIR}/fio ${FIOFILE} 2>&1 | tee -a ${OUTFILE}
+            cmd ${FIO_DIR}/fio ${FIOFILE} 2>&1 | tee -a ${OUTFILE}
 
             if [ -n "$(grep maxt= ${OUTFILE})" ]; then
                 echo -e "\n========\n" >> ${OUTFILE}

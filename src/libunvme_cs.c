@@ -53,7 +53,8 @@ static void csif_map(unvme_csif_t* csif, unvme_session_t* ses, int vfid)
     sprintf(path, "/unvme.csif.%d.%d", vfid, ses ? ses->id : 0);
     csif->sf = shm_map(path);
     if (!csif->sf) exit(1);
-    csif->sem = (sem_t*)csif->sf->buf;
+    csif->lock = (pthread_spinlock_t*)csif->sf->buf;
+    csif->sem = (sem_t*)(csif->lock + 1);
     csif->msgbuf = csif->sem + 1;
     if (ses) {
         csif->mqsize = ses->qcount + 1;
@@ -62,7 +63,6 @@ static void csif_map(unvme_csif_t* csif, unvme_session_t* ses, int vfid)
         csif->mqhead = csif->mqcount + 1;
         csif->mqtail = csif->mqhead + 1;
         csif->mq = csif->mqtail + 1;
-        pthread_spin_init(&csif->mqlock, PTHREAD_PROCESS_PRIVATE);
     }
 }
 
@@ -72,16 +72,15 @@ static void csif_map(unvme_csif_t* csif, unvme_session_t* ses, int vfid)
  */
 static inline void csif_unmap(unvme_csif_t* csif)
 {
-    if (csif->mq) pthread_spin_destroy(&csif->mqlock);
     shm_unmap(csif->sf);
 }
 
 /**
- * Send a request to the server and wait for acknowledgement.
+ * Send an admin type command to the server and wait for acknowledgement.
  * @param   csif    interface
  * @param   msg     message
  */
-static inline void csif_send(unvme_csif_t* csif, unvme_msg_t* msg)
+static inline void csif_admin(unvme_csif_t* csif, unvme_msg_t* msg)
 {
     msg->ack = UNVME_CMD_NULL;
     msg->stat = -1;
@@ -90,20 +89,20 @@ static inline void csif_send(unvme_csif_t* csif, unvme_msg_t* msg)
 }
 
 /**
- * Put a command on the queue to send to server and wait for acknowledgement.
+ * Send an IO queue type command to server and wait for acknowledgement.
  * @param   csif    interface
  * @param   qid     client session queue id
  * @param   msg     message
  */
-static inline void csif_post(unvme_csif_t* csif, int qid, unvme_msg_t* msg)
+static inline void csif_ioq(unvme_csif_t* csif, int qid, unvme_msg_t* msg)
 {
     msg->ack = UNVME_CMD_NULL;
     msg->stat = -1;
 
-    pthread_spin_lock(&csif->mqlock);
+    pthread_spin_lock(csif->lock);
     csif->mq[*csif->mqtail] = qid;
     if (++(*csif->mqtail) == csif->mqsize) *csif->mqtail = 0;
-    pthread_spin_unlock(&csif->mqlock);
+    pthread_spin_unlock(csif->lock);
 
     atomic_add(csif->mqcount, 1);
     sem_post(csif->sem);
@@ -122,7 +121,7 @@ static void datapool_map(unvme_queue_t* q, int vfid, int qid)
     size_t datasize = q->ses->ns.maxppq * q->ses->ns.pagesize;
     size_t statsize = q->ses->ns.maxppq * sizeof(unvme_piostat_t);
     char path[32];
-    sprintf(path, "/unvme.data.%d.%d", vfid, qid);
+    sprintf(path, "/unvme.data.%d.%d.%d", vfid, q->ses->id, qid);
     q->datapool.sf = shm_map(path);
     if (!q->datapool.sf) exit(1);
     q->datapool.piostat = q->datapool.sf->buf + datasize;
@@ -148,19 +147,22 @@ static inline void datapool_unmap(unvme_queue_t* q)
  */
 unvme_session_t* client_open(int vfid, int nsid, int qcount, int qsize)
 {
+    unvme_session_t* ses = NULL;
     if (!client.csif.msgbuf) csif_map(&client.csif, NULL, vfid);
-
     unvme_msg_t* msg = client.csif.msgbuf;
+
+    // only one client process can access the admin message at a time
+    pthread_spin_lock(client.csif.lock);
+
     msg->cmd = UNVME_CMD_OPEN;
     msg->cpid = getpid();
     msg->nsid = nsid;
     msg->qcount = qcount;
     msg->qsize = qsize;
-    csif_send(&client.csif, msg);
-    if (msg->stat) return NULL;
+    csif_admin(&client.csif, msg);
+    if (msg->stat) goto end;
 
-    unvme_session_t* ses = zalloc(sizeof(unvme_session_t) +
-                                  sizeof(unvme_queue_t) * qcount);
+    ses = zalloc(sizeof(unvme_session_t) + sizeof(unvme_queue_t) * qcount);
     ses->queues = (unvme_queue_t*)(ses + 1);
     ses->id = msg->sid;
     ses->cpid = msg->cpid;
@@ -187,6 +189,8 @@ unvme_session_t* client_open(int vfid, int nsid, int qcount, int qsize)
         client.ses->prev = ses;
     }
 
+end:
+    pthread_spin_unlock(client.csif.lock);
     return ses;
 }
 
@@ -197,18 +201,22 @@ unvme_session_t* client_open(int vfid, int nsid, int qcount, int qsize)
  */
 int client_close(const unvme_ns_t* ns)
 {
+    int err = -1;
     unvme_session_t* ses = ns->ses;
+
+    // only one client process can access the admin message at a time
+    pthread_spin_lock(client.csif.lock);
+
     unvme_msg_t* msg = client.csif.msgbuf;
     msg->cmd = UNVME_CMD_CLOSE;
     msg->cpid = ses->cpid;
     msg->sid = ses->id;
-    csif_send(&client.csif, msg);
-    if (msg->stat) return -1;
+    csif_admin(&client.csif, msg);
+    if (msg->stat) goto end;
 
     csif_unmap(&ses->csif);
     int i;
     for (i = 0; i < ses->qcount; i++) datapool_unmap(ses->queues + i);
-
     if (ses == ses->next) {
         client.ses = NULL;
     } else {
@@ -218,7 +226,11 @@ int client_close(const unvme_ns_t* ns)
     }
 
     free(ses);
-    return 0;
+    err = 0;
+
+end:
+    pthread_spin_unlock(client.csif.lock);
+    return err;
 }
 
 /**
@@ -237,7 +249,7 @@ int client_alloc(const unvme_ns_t* ns, unvme_pal_t* pal)
     int i;
     for (i = 0; i < pal->count; i++) {
         msg->cmd = UNVME_CMD_ALLOC;
-        csif_post(csif, qid, msg);
+        csif_ioq(csif, qid, msg);
         if (msg->stat) return -1;
         p->id = msg->pgid;
         p->qid = qid;
@@ -264,7 +276,7 @@ int client_free(const unvme_ns_t* ns, unvme_pal_t* pal)
     for (i = 0; i < pal->count; i++) {
         msg->pgid = pal->pa[i].id;
         msg->cmd = UNVME_CMD_FREE;
-        csif_post(csif, qid, msg);
+        csif_ioq(csif, qid, msg);
         if (msg->stat) return -1;
     }
     return 0;
@@ -287,7 +299,7 @@ int client_rw(const unvme_ns_t* ns, unvme_page_t* pa, int opc)
     msg->cmd = opc;
     int numpages = (pa->nlb + ns->nbpp - 1) / ns->nbpp;
     memcpy(msg->pa, pa, numpages * sizeof(unvme_page_t));
-    csif_post(csif, qid, msg);
+    csif_ioq(csif, qid, msg);
     return 0;
 }
 

@@ -62,7 +62,7 @@ void unvme_datapool_alloc(unvme_queue_t* ioq)
 
     DEBUG_FN("%d.%d", dev->vfiodev->id, ioq->nvq->id);
     char path[32];
-    sprintf(path, "/unvme.data.%d.%d", dev->vfiodev->id, ioq->nvq->id);
+    sprintf(path, "/unvme.data.%d.%d.%d", dev->vfiodev->id, ioq->ses->id, ioq->nvq->id);
     datapool->sf = shm_create(path, datasize + statsize + cpqsize);
     if (!datapool->sf) FATAL();
     datapool->data = vfio_dma_map(dev->vfiodev, datasize, datapool->sf->buf);
@@ -85,7 +85,7 @@ void unvme_datapool_free(unvme_queue_t* ioq)
 {
     unvme_datapool_t* datapool = &ioq->datapool;
 
-    DEBUG_FN("%d.%d", ioq->ses->dev->vfiodev->id, ioq->nvq->id);
+    DEBUG_FN("%d.%d", ioq->ses->dev->vfiodev->id, ioq->ses->id, ioq->nvq->id);
     if (vfio_dma_free(datapool->prplist) ||
         vfio_dma_unmap(datapool->data) ||
         shm_delete(datapool->sf)) FATAL();
@@ -169,19 +169,22 @@ static void unvme_csif_create(unvme_session_t* ses)
     unvme_csif_t* csif = &ses->csif;
     csif->mqsize = ses->qcount + 1;
     csif->msglen = sizeof(unvme_msg_t) + sizeof(unvme_page_t) * ses->ns.maxppio;
-    csif->sf = shm_create(path, sizeof(sem_t) +
+    csif->sf = shm_create(path, sizeof(pthread_spinlock_t) + sizeof(sem_t) +
                                 csif->msglen * ses->qcount +
                                 sizeof(int) * (3 + csif->mqsize));
     if (!csif->sf) FATAL();
-    csif->sem = (sem_t*)csif->sf->buf;
+    csif->lock = (pthread_spinlock_t*)csif->sf->buf;
+    csif->sem = (sem_t*)(csif->lock + 1);
     csif->msgbuf = csif->sem + 1;
     csif->mqcount = (int*)(csif->msgbuf + csif->msglen * ses->qcount);
     csif->mqhead = csif->mqcount + 1;
     csif->mqtail = csif->mqhead + 1;
     csif->mq = csif->mqtail + 1;
 
-    if (sem_init(csif->sem, 1, 0) ||
+    if (pthread_spin_init(csif->lock, PTHREAD_PROCESS_SHARED) ||
+        sem_init(csif->sem, 1, 0) ||
         pthread_create(&csif->thread, 0, unvme_csif_thread, ses)) FATAL();
+
     sem_wait(&unvme_sem);
 }
 
@@ -197,6 +200,7 @@ static void unvme_csif_delete(unvme_session_t* ses)
     sem_post(csif->sem);
     pthread_join(csif->thread, 0);
     sem_destroy(csif->sem);
+    pthread_spin_destroy(csif->lock);
     shm_delete(csif->sf);
 }
 

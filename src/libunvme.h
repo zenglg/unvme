@@ -56,6 +56,7 @@ typedef uint64_t        u64;        ///< 64-bit unsigned
 /// Namespace attributes structure
 typedef struct _unvme_ns {
     int                 id;         ///< namespace id
+    int                 sid;        ///< session id
     int                 vid;        ///< PCI vendor id
     char                model[8];   ///< compiled model name
     char                sn[20];     ///< serial number

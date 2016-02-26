@@ -29,7 +29,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-TARGETS = unvme_api_test unvme_mts_test unvme_lat_test
+TARGETS = unvme_api_test unvme_mts_test unvme_lat_test unvme_moc_test
 
 UNVME_SRC = ../../src
 

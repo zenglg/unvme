@@ -245,7 +245,7 @@ int main(int argc, char* argv[])
     prog = prog ? prog + 1 : argv[0];
 
     int opt;
-    while ((opt = getopt(argc, argv, "wn:q:d:t:")) != -1) {
+    while ((opt = getopt(argc, argv, "n:q:d:t:")) != -1) {
         switch (opt) {
         case 'n':
             nsid = atoi(optarg);
@@ -256,9 +256,7 @@ int main(int argc, char* argv[])
             break;
         case 'd':
             qsize = atoi(optarg);
-            if (qsize < 2) {
-                error(1, 0, "qsize must be > 1");
-            }
+            if (qsize < 2) error(1, 0, "qsize must be > 1");
             break;
         case 't':
             runtime = atoi(optarg);
