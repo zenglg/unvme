@@ -11,14 +11,13 @@ Linux kernel (introduced since 3.6).
 From the application perspective, UNVMe provides a single library (libunvme.a)
 with a set of custom APIs for accessing NVMe devices.
 
-In this project, UNVMe is implemented as three distinct models:
+In this project, UNVMe is implemented as three distinct models (choose one):
 
     model_apc   -   Using this library model, an application will have
                     exclusive access to a given NVMe device, where the
                     application will process the completion queue at the time
                     of checking for an I/O status.  In this model, there will
                     be no context switch in the submission and completion paths.
-
 
     model_tpc   -   Using this library model, an application will have
                     exclusive access to a given NVMe device, where a built-in
@@ -65,9 +64,15 @@ based systems with vfio support which requires the following features:
                         CONFIG_VFIO=m
                         CONFIG_VFIO_PCI=m
                         CONFIG_VFIO_IOMMU_TYPE1=m
+                        CONFIG_INTEL_IOMMU_DEFAULT_ON=y
 
-                    Also the boot command line must have the "intel_iommu=on"
-                    argument set (and optionally "iommu=pt").
+                    If CONFIG_INTEL_IOMMU_DEFAULT_ON is not set then the boot
+                    command line must have "intel_iommu=on" argument set instead.
+                    To support both UNVMe and SPDK, set "iommu=pt" also.
+
+                    To verify the system is correctly configured with vfio support,
+                    check that /sys/kernel/iommu_groups directory is not empty
+                    but contains other subdirectories (i.e. group numbers).
 
 
 Build and Run
@@ -140,16 +145,13 @@ NVMe direct access tests (bypassing UNVMe driver) can be run as:
     ...
 
 
-Benchmark
-=========
+Benchmarks
+==========
 
-UNVMe has been benchmarked with fio (Flexible I/O Tester) using the test
-script test/unvme-benchmark.  The ioengine/unvme_fio is provided for
-this purpose.  In order to build the unvme_fio engine, the user must either
-set the FIO_DIR variable to point to the fio source path in the Makefile.def
-or specify FIO_DIR on the make command line as:
-
-    $ FIO_DIR=/path/fio make model_apc
+UNVMe has been benchmarked with fio (Flexible I/O Tester) using the test script 
+test/unvme-benchmark.  The ioengine/unvme_fio is provided for this purpose.
+In order to build the unvme_fio engine, the user must set the FIO_DIR variable
+pointing to the fully compiled fio source path in Makefile.def.
 
 
 To produce benchmark results for UNVMe model_apc, run:
@@ -170,10 +172,23 @@ To produce benchmark results for UNVMe model_cs, run:
     $ OUTDIR=out/cs test/unvme-benchmark /dev/vfio/X
 
 
-To reset and get benchmark results for the NVMe kernel space driver, run:
+To produce benchmark results for the NVMe kernel space driver, run:
 
     $ test/unvme-setup reset
     $ OUTDIR=out/nvme test/unvme-benchmark /dev/nvme0n1
+
+
+To produce benchmark results for the Intel SPDK, do the following:
+
+    1) Add "iommu=pt" argument to your boot command line and reboot.
+    2) Build SPDK code and run setup per SPDK instructions.
+    3) Set SPDK_ROOT_DIR in the Makefile.def
+    4) Use 'lspci' to get the PCI info of the NVMe device you want to test, e.g.:
+        $ lspci | grep Volatile
+        05:00.0 Non-Volatile memory controller: Intel Corporation PCIe Data Center SSD (rev 01)
+
+    5) Then run the benchmark script as:
+        $ OUTDIR=out/spdk test/unvme-benchmark /spdk/05:00.0
 
 
 Notes on unvme-benchmark script:
@@ -191,9 +206,6 @@ Notes on unvme-benchmark script:
 
     + If the tested device nsid is other than 1 then the variable NSID must be
       specified on the shell command line.
-
-    + The FIO_DIR should be set in Makefile.def where the fio source code
-      and executable are found.
 
 
 Documentation
