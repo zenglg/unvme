@@ -1,21 +1,22 @@
 <!DOCTYPE html>
-<html lang="en-us">
-  <head>
-    <meta http-equiv="content-type" content="text/html;charset=UTF-8">
+<!-- saved from url=(0033)http://micronssd.github.io/unvme/ -->
+<html lang="en-us"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
     <meta name="description" content="User Space NVMe Driver">
     <meta name="robots" content="index,follow">
     <meta name="keywords" content="unvme, nvme, userspace NVMe driver, user space NVMe driver, ssd, userspace driver, user space driver, micron, spdk, github">
-    <title>UNVMe by Micron</title>
+    <title>User Space NVMe Driver</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" type="text/css" href="stylesheets/normalize.css" media="screen">
-    <link href='https://fonts.googleapis.com/css?family=Open+Sans:400,700' rel='stylesheet' type='text/css'>
-    <link rel="stylesheet" type="text/css" href="stylesheets/stylesheet.css" media="screen">
-    <link rel="stylesheet" type="text/css" href="stylesheets/github-light.css" media="screen">
+    <link rel="stylesheet" type="text/css" href="./UNVMe by Micron_files/normalize.css" media="screen">
+    <link href="./UNVMe by Micron_files/css" rel="stylesheet" type="text/css">
+    <link rel="stylesheet" type="text/css" href="./UNVMe by Micron_files/stylesheet.css" media="screen">
+    <link rel="stylesheet" type="text/css" href="./UNVMe by Micron_files/github-light.css" media="screen">
   </head>
   <body>
     <section class="page-header">
+      <img src="logomicron.png">
       <h1 class="project-name">UNVMe</h1>
-      <h2 class="project-tagline">User Space NVMe Driver by Micron Technology</h2>
+      <h2 class="project-tagline">User Space NVMe Driver</h2>
       <a href="https://github.com/MicronSSD/unvme" class="btn">View on GitHub</a>
       <a href="https://github.com/MicronSSD/unvme/zipball/master" class="btn">Download .zip</a>
       <a href="https://github.com/MicronSSD/unvme/tarball/master" class="btn">Download .tar.gz</a>
@@ -23,7 +24,7 @@
 
     <section class="main-content">
       <h1>
-<a id="unvme---a-user-space-nvme-driver-project" class="anchor" href="#unvme---a-user-space-nvme-driver-project" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>UNVMe - A User Space NVMe Driver Project</h1>
+<a id="unvme---a-user-space-nvme-driver-project" class="anchor" href="http://micronssd.github.io/unvme/#unvme---a-user-space-nvme-driver-project" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>UNVMe - A User Space NVMe Driver Project</h1>
 
 <p>UNVMe is a user space NVMe driver developed at Micron Technology for the
 purpose of benchmarking different polling models in comparison to the
@@ -42,7 +43,6 @@ with a set of custom APIs for accessing NVMe devices.</p>
                 application will process the completion queue at the time
                 of checking for an I/O status.  In this model, there will
                 be no context switch in the submission and completion paths.
-
 
 model_tpc   -   Using this library model, an application will have
                 exclusive access to a given NVMe device, where a built-in
@@ -72,7 +72,7 @@ one or more queues, but a queue must only be accessed by a single thread
 in order to guarantee thread-safe operations.</p>
 
 <h1>
-<a id="system-requirements" class="anchor" href="#system-requirements" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>System Requirements</h1>
+<a id="system-requirements" class="anchor" href="http://micronssd.github.io/unvme/#system-requirements" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>System Requirements</h1>
 
 <p>UNVMe has only been built and tested on CentOS 6 and 7 running on x86_64 CPU
 based systems with vfio support which requires the following features:</p>
@@ -89,10 +89,18 @@ vfio        -   Linux kernel 3.6 or later, and the kernel must be built
                     CONFIG_VFIO=m
                     CONFIG_VFIO_PCI=m
                     CONFIG_VFIO_IOMMU_TYPE1=m
+                    CONFIG_INTEL_IOMMU_DEFAULT_ON=y
+
+                If CONFIG_INTEL_IOMMU_DEFAULT_ON is not set then the boot
+                command line must have "intel_iommu=on" argument set instead.
+
+                To verify the system is correctly configured with vfio support,
+                check that /sys/kernel/iommu_groups directory is not empty
+                but contains other subdirectories (i.e. group numbers).
 </code></pre>
 
 <h1>
-<a id="build-and-run" class="anchor" href="#build-and-run" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Build and Run</h1>
+<a id="build-and-run" class="anchor" href="http://micronssd.github.io/unvme/#build-and-run" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Build and Run</h1>
 
 <p>The Makefile.def file is provided for the user to specify the default
 model to build when running:</p>
@@ -137,7 +145,7 @@ command:</p>
 </code></pre>
 
 <h1>
-<a id="applications-and-tests" class="anchor" href="#applications-and-tests" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Applications and Tests</h1>
+<a id="applications-and-tests" class="anchor" href="http://micronssd.github.io/unvme/#applications-and-tests" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Applications and Tests</h1>
 
 <p>Applications can be built using the libunvme.h and libunvme.a interfaces.
 The library provides the APIs for UNVMe as well as direct NVMe commands
@@ -164,7 +172,7 @@ $ test/nvme/nvme_get_log_page /dev/vfio/X 1 3  # get log page firmware slot
 </code></pre>
 
 <h1>
-<a id="benchmark" class="anchor" href="#benchmark" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Benchmark</h1>
+<a id="benchmark" class="anchor" href="http://micronssd.github.io/unvme/#benchmark" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Benchmark</h1>
 
 <p>UNVMe has been benchmarked with fio (Flexible I/O Tester) using the test
 script test/unvme-benchmark.  The ioengine/unvme_fio is provided for
@@ -222,7 +230,7 @@ $ OUTDIR=out/nvme test/unvme-benchmark /dev/nvme0n1
 </code></pre>
 
 <h1>
-<a id="documentation" class="anchor" href="#documentation" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Documentation</h1>
+<a id="documentation" class="anchor" href="http://micronssd.github.io/unvme/#documentation" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Documentation</h1>
 
 <p>Doxygen formatted documents for the source code can be generated as:</p>
 
@@ -232,18 +240,19 @@ $ OUTDIR=out/nvme test/unvme-benchmark /dev/nvme0n1
 <p>The output HTML based document can then be browsed from doc/html/index.html.</p>
 
 <h1>
-<a id="questions-and-comments" class="anchor" href="#questions-and-comments" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Questions and Comments:</h1>
+<a id="questions-and-comments" class="anchor" href="http://micronssd.github.io/unvme/#questions-and-comments" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Questions and Comments:</h1>
 
 <p>Please feel free to create new issue for questions and comments.</p>
 
       <footer class="site-footer">
         <span class="site-footer-owner"><a href="https://github.com/MicronSSD/unvme">Unvme</a> is maintained by <a href="https://github.com/MicronSSD">MicronSSD</a>.</span>
 
-        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a> using the <a href="https://github.com/jasonlong/cayman-theme">Cayman theme</a> by <a href="https://twitter.com/jasonlong">Jason Long</a>.</span>
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com/">GitHub Pages</a> using the <a href="https://github.com/jasonlong/cayman-theme">Cayman theme</a> by <a href="https://twitter.com/jasonlong">Jason Long</a>.</span>
       </footer>
 
     </section>
 
   
-  </body>
-</html>
+  
+
+</body></html>
