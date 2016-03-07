@@ -44,7 +44,6 @@ with a set of custom APIs for accessing NVMe devices.</p>
                 of checking for an I/O status.  In this model, there will
                 be no context switch in the submission and completion paths.
 
-
 model_tpc   -   Using this library model, an application will have
                 exclusive access to a given NVMe device, where a built-in
                 thread will automatically process I/O completion, and
@@ -94,6 +93,7 @@ vfio        -   Linux kernel 3.6 or later, and the kernel must be built
 
                 If CONFIG_INTEL_IOMMU_DEFAULT_ON is not set then the boot
                 command line must have "intel_iommu=on" argument set instead.
+                To support both UNVMe and SPDK, set "iommu=pt" also.
 
                 To verify the system is correctly configured with vfio support,
                 check that /sys/kernel/iommu_groups directory is not empty
@@ -175,11 +175,10 @@ $ test/nvme/nvme_get_log_page /dev/vfio/X 1 3  # get log page firmware slot
 <h1>
 <a id="benchmark" class="anchor" href="#benchmark" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Benchmark</h1>
 
-<p>UNVMe has been benchmarked with fio (Flexible I/O Tester) using the test
-script test/unvme-benchmark.  The ioengine/unvme_fio is provided for
-this purpose.  In order to build the unvme_fio engine, the user must either
-set the FIO_DIR variable to point to the fio source path in the Makefile.def
-or specify FIO_DIR on the make command line as:</p>
+<p>UNVMe has been benchmarked with fio (Flexible I/O Tester) using the test script 
+test/unvme-benchmark.  The ioengine/unvme_fio is provided for this purpose.
+In order to build the unvme_fio engine, the user must set the FIO_DIR variable
+pointing to the fully compiled fio source path in Makefile.def.</p>
 
 <pre><code>$ FIO_DIR=/path/fio make model_apc
 </code></pre>
@@ -204,10 +203,25 @@ $ src/unvme /dev/vfio/X ...
 $ OUTDIR=out/cs test/unvme-benchmark /dev/vfio/X
 </code></pre>
 
-<p>To reset and get benchmark results for the NVMe kernel space driver, run:</p>
+<p>To produce results for the NVMe kernel space driver, run:</p>
 
 <pre><code>$ test/unvme-setup reset
 $ OUTDIR=out/nvme test/unvme-benchmark /dev/nvme0n1
+</code></pre>
+
+<p>To produce benchmark results for the Intel SPDK, do the following:</p>
+
+<pre><code>1) Add "iommu=pt" argument to your boot command line and reboot.
+2) Edit Makefile.def and set FIO_DIR to a fully built fio code,
+   and SPDK_ROOT_DIR to a fully built SPDK code.
+3) Run the SPDK setup scripts per instructions.
+4) Build the spdk_fio engine as:
+    $ make -C ioengine spdk_fio
+5) Use 'lspci' to get the PCI info of the NVMe device you want to test, e.g.:
+    $ lspci | grep Volatile
+    05:00.0 Non-Volatile memory controller: Intel Corporation PCIe Data Center SSD (rev 01)
+6) Then run the benchmark script as (the results will be in test/out):
+    $ test/unvme-benchmark /spdk/05:00.0
 </code></pre>
 
 <p>Notes on unvme-benchmark script:</p>
@@ -216,6 +230,12 @@ $ OUTDIR=out/nvme test/unvme-benchmark /dev/nvme0n1
   random write using 1, 4, 8, and 16 jobs (threads) with iodepth of
   1, 4, 8, 16, 32, and 64.
 
++ The complete benchmark test will take about 6 hours.  For comparison
+  between modules, random read results are more relevant since SSD write
+  time tend to fluctuate due to caching.  It is also better to add
+  "processor.max_cstate=1 intel_idle.max_cstate=0" to the boot command line 
+  to turn off the CPU power saving feature which may also affect results.
+
 + For UNVMe, the number of fio jobs will be translated to the number of
   queues and iodepth (+1) will be the queue size.
 
@@ -223,11 +243,8 @@ $ OUTDIR=out/nvme test/unvme-benchmark /dev/nvme0n1
   where the unvme-benchmark script resides.  The outut directory can also
   be overriden by specifying OUTDIR on the shell command line.
 
-+ If the tested device nsid is other than 1 then the variable NSID must be
-  specified on the shell command line.
-
-+ The FIO_DIR should be set in Makefile.def where the fio source code
-  and executable are found.
++ If the tested device nsid is other than 1 then set the variable NSID on
+  the shell command line (e.g. NSID=2 test/unvme-benchmark /dev/vfio/20).
 </code></pre>
 
 <h1>
