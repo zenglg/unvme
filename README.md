@@ -181,14 +181,16 @@ To produce benchmark results for the NVMe kernel space driver, run:
 To produce benchmark results for the Intel SPDK, do the following:
 
     1) Add "iommu=pt" argument to your boot command line and reboot.
-    2) Build SPDK code and run setup per SPDK instructions.
-    3) Set SPDK_ROOT_DIR in the Makefile.def
-    4) Use 'lspci' to get the PCI info of the NVMe device you want to test, e.g.:
+    2) Edit Makefile.def and set FIO_DIR to a fully built fio code,
+       and SPDK_ROOT_DIR to a fully built SPDK code.
+    3) Run the SPDK setup scripts per instructions.
+    4) Build the spdk_fio engine as:
+        $ make -C ioengine spdk_fio
+    5) Use 'lspci' to get the PCI info of the NVMe device you want to test, e.g.:
         $ lspci | grep Volatile
         05:00.0 Non-Volatile memory controller: Intel Corporation PCIe Data Center SSD (rev 01)
-
-    5) Then run the benchmark script as:
-        $ OUTDIR=out/spdk test/unvme-benchmark /spdk/05:00.0
+    6) Then run the benchmark script as (the results will be in test/out):
+        $ test/unvme-benchmark /spdk/05:00.0
 
 
 Notes on unvme-benchmark script:
@@ -196,6 +198,12 @@ Notes on unvme-benchmark script:
     + The unvme-benchmark script will run fio tests for random read and then
       random write using 1, 4, 8, and 16 jobs (threads) with iodepth of
       1, 4, 8, 16, 32, and 64.
+      
+    + The complete benchmark test will take about 6 hours.  For comparison
+      between modules, random read results are more relevant since SSD write
+      time tend to fluctuate due to caching.  It is also better to add
+      "processor.max_cstate=1 intel_idle.max_cstate=0" to the boot command line 
+      to turn off the CPU power saving feature which may also affect results.
 
     + For UNVMe, the number of fio jobs will be translated to the number of
       queues and iodepth (+1) will be the queue size.
@@ -204,8 +212,8 @@ Notes on unvme-benchmark script:
       where the unvme-benchmark script resides.  The outut directory can also
       be overriden by specifying OUTDIR on the shell command line.
 
-    + If the tested device nsid is other than 1 then the variable NSID must be
-      specified on the shell command line.
+    + If the tested device nsid is other than 1 then set the variable NSID
+      on the shell command line (e.g. NSID=2 test/unvme-benchmark /dev/vfio/10).
 
 
 Documentation
