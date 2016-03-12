@@ -5,7 +5,7 @@ UNVMe is a user space NVMe driver developed at Micron Technology for the
 purpose of benchmarking different polling models in comparison to the
 kernel space NVMe driver interupt driven model.
 
-The UNVMe driver depends on features provided by the vfio module in the
+The UNVMe driver depends on features provided by the VFIO module in the
 Linux kernel (introduced since 3.6).
 
 From the application perspective, UNVMe provides a single library (libunvme.a)
@@ -50,29 +50,34 @@ System Requirements
 ===================
 
 UNVMe has only been built and tested on CentOS 6 and 7 running on x86_64 CPU
-based systems with vfio support which requires the following features:
+based systems.  It requires the following hardware and software support:
 
-    VT-d        -   Hardware must have Intel CPU that supports VT-d
-                    (Virtualization Technology for Directed I/O).
-                
-    vfio        -   Linux kernel 3.6 or later, and the kernel must be built
-                    with these configurations enabled:
+    VT-d    -   System with CPU that supports VT-d
+                (Virtualization Technology for Directed I/O).
+                Check the <a href="http://ark.intel.com">Intel product specifications</a>
 
-                        CONFIG_IOMMU_API=y
-                        CONFIG_IOMMU_SUPPORT=y
-                        CONFIG_INTEL_IOMMU=y
-                        CONFIG_VFIO=m
-                        CONFIG_VFIO_PCI=m
-                        CONFIG_VFIO_IOMMU_TYPE1=m
-                        CONFIG_INTEL_IOMMU_DEFAULT_ON=y
+    VFIO    -   Linux kernel 3.6 or later compiled with the following configurations:
 
-                    If CONFIG_INTEL_IOMMU_DEFAULT_ON is not set then the boot
-                    command line must have "intel_iommu=on" argument set instead.
-                    To support both UNVMe and SPDK, set "iommu=pt" also.
+                    CONFIG_IOMMU_API=y
+                    CONFIG_IOMMU_SUPPORT=y
+                    CONFIG_INTEL_IOMMU=y
+                    CONFIG_VFIO=m
+                    CONFIG_VFIO_PCI=m
+                    CONFIG_VFIO_IOMMU_TYPE1=m
+                    CONFIG_INTEL_IOMMU_DEFAULT_ON=y
 
-                    To verify the system is correctly configured with vfio support,
-                    check that /sys/kernel/iommu_groups directory is not empty
-                    but contains other subdirectories (i.e. group numbers).
+                If CONFIG_INTEL_IOMMU_DEFAULT_ON is not enabled then the boot
+                command line must have the "intel_iommu=on" parameter set.
+                To support both UNVMe and SPDK, set also the "iommu=pt" parameter.
+
+                To verify the system is correctly configured with VFIO support,
+                check that /sys/kernel/iommu_groups directory is not empty but
+                contains other subdirectories (i.e. group numbers).
+
+                On CentOS 6, which comes with kernel version 2.6, the user must
+                compile and boot a newer kernel that has the VFIO module.
+
+    libpciaccess-devel - If missing, run "yum install libpciaccess-devel".
 
 
 Build and Run
@@ -82,6 +87,13 @@ The Makefile.def file is provided for the user to specify the default
 model to build when running:
 
     $ make
+
+CentOS 6 which comes with Linux kernel 2.6 does not have the VFIO module,
+so the header file "/usr/include/linux/vfio.h" does not exist, so UNVMe
+compilation would fail.  The user will need to set the CPPFLAGS in
+Makefile.def to include the kernel source directory with VFIO support
+where linux/vfio.h resides (e.g. CPPFLAGS += -I/usr/src/kernels/3.x/include).
+
 
 A specific model can also be built by explicitly specifying one of the
 following targets:
@@ -98,8 +110,8 @@ When building model_apc or model_tpc, make will produce a 'libunvme.a' library.
 When building the model_cs, make will produce a 'libunvme.a' library and
 a 'unvme' executable which is the driver to be run as a service.
 
-If the model_cs is built, then the service needs to be run specifying a list
-of mapped vfio devices as its arguments, i.e. prior to running applications.
+If the model_cs is built, then the "unvme" driver needs to be run with
+an argument list of VFIO devices, i.e. prior to running applications.
 For example:
 
     $ src/unvme /dev/vfio/X /dev/vfio/Y ...
@@ -107,11 +119,12 @@ For example:
 The UNVMe runtime log messages will be saved in /dev/shm/unvme.log.
 
 
-Before running the UNVMe service or applications, the user must first run
-the setup script once to bind all the NVMe to vfio devices using the following
+Before running the UNVMe driver or applications, the user must first run
+the setup script once to bind all NVMe to VFIO devices using the following
 command:
 
     $ test/unvme-setup
+
 
 To reset the devices to the default NVMe kernel space drivers, run command:
 
@@ -123,7 +136,7 @@ Applications and Tests
 
 Applications can be built using the libunvme.h and libunvme.a interfaces.
 The library provides the APIs for UNVMe as well as direct NVMe commands
-with vfio functions support for DMA allocation.
+with VFIO functions support for DMA allocation.
 
 Examples of both UNVMe and NVMe level testing are provided under the test
 directory.
@@ -148,10 +161,10 @@ NVMe direct access tests (bypassing UNVMe driver) can be run as:
 Benchmarks
 ==========
 
-UNVMe has been benchmarked with fio (Flexible I/O Tester) using the test script 
+UNVMe has been benchmarked with FIO (Flexible I/O Tester) using the test script
 test/unvme-benchmark.  The ioengine/unvme_fio is provided for this purpose.
 In order to build the unvme_fio engine, the user must set the FIO_DIR variable
-pointing to the fully compiled fio source path in Makefile.def.
+pointing to the fully compiled FIO source path in Makefile.def.
 
 
 To produce benchmark results for UNVMe model_apc, run:
@@ -181,8 +194,8 @@ To produce benchmark results for the NVMe kernel space driver, run:
 To produce benchmark results for the Intel SPDK, do the following:
 
     1) Add "iommu=pt" argument to your boot command line and reboot.
-    2) Edit Makefile.def and set FIO_DIR to a fully built fio code,
-       and SPDK_ROOT_DIR to a fully built SPDK code.
+    2) Edit Makefile.def and set FIO_DIR to a fully compiled FIO source code,
+       and SPDK_ROOT_DIR to a fully compiled SPDK code.
     3) Run the SPDK setup scripts per instructions.
     4) Build the spdk_fio engine as:
         $ make -C ioengine spdk_fio
@@ -193,27 +206,30 @@ To produce benchmark results for the Intel SPDK, do the following:
         $ test/unvme-benchmark /spdk/05:00.0
 
 
-Notes on unvme-benchmark script:
+Notes:
 
-    + The unvme-benchmark script will run fio tests for random read and then
+    + The unvme-benchmark script will run FIO tests for random read and then
       random write using 1, 4, 8, and 16 jobs (threads) with iodepth of
       1, 4, 8, 16, 32, and 64.
       
     + The complete benchmark test will take about 6 hours.  For comparison
       between modules, random read results are more relevant since SSD write
       time tend to fluctuate due to caching.  It is also better to add
-      "processor.max_cstate=1 intel_idle.max_cstate=0" to the boot command line 
+      "processor.max_cstate=1 intel_idle.max_cstate=0" to the boot command line
       to turn off the CPU power saving feature which may also affect results.
 
-    + For UNVMe, the number of fio jobs will be translated to the number of
+    + For UNVMe, the number of FIO jobs will be translated to the number of
       queues and iodepth (+1) will be the queue size.
 
-    + The default output directory will be "out" relative to the test directory
-      where the unvme-benchmark script resides.  The outut directory can also
+    + The default output directory for unvme-benchmak will be "out" relative
+      to where the unvme-benchmark script resides.  The output directory can
       be overriden by specifying OUTDIR on the shell command line.
 
     + If the tested device nsid is other than 1 then set the variable NSID
       on the shell command line (e.g. NSID=2 test/unvme-benchmark /dev/vfio/10).
+
+    + The implemented unvme_fio and spdk_fio engines do not support the FIO
+      'verify' option.
 
 
 Documentation
@@ -229,5 +245,6 @@ The output HTML based document can then be browsed from doc/html/index.html.
 Questions and Comments:
 =======================
 
-Please feel free to create new issue for questions and comments.
+See also the <a href="https://github.com/MicronSSD/unvme/wiki">Wiki FAQ</a> page,
+and feel free to create new issue for questions and comments.
 
