@@ -49,8 +49,7 @@ typedef uint64_t        u64;        ///< 64-bit unsigned
 #endif // _UNVME_TYPE
 
 
-//#define UNVME_MAXIOLEN  (128*1024)  ///< max io transfer length
-#define UNVME_TIMEOUT   60          ///< io timeout in seconds
+#define UNVME_TIMEOUT   60          ///< I/O timeout in seconds
 
 
 /// Namespace attributes structure
@@ -59,7 +58,7 @@ typedef struct _unvme_ns {
     int                 sid;        ///< session id
     int                 vid;        ///< PCI vendor id
     char                model[8];   ///< compiled model name
-    char                sn[20];     ///< serial number
+    char                sn[20];     ///< device serial number
     char                mn[40];     ///< namespace model number
     char                fr[8];      ///< namespace firmware revision
     int                 maxqsize;   ///< max queue size supported
@@ -67,22 +66,22 @@ typedef struct _unvme_ns {
     int                 blocksize;  ///< logical block size
     u64                 blockcount; ///< total number of logical blocks
     int                 nbpp;       ///< number of blocks per page
-    int                 maxppio;    ///< max numer of pages per io
-    int                 maxbpio;    ///< max number of blocks per io
+    int                 maxppio;    ///< max numer of pages per I/O
+    int                 maxbpio;    ///< max number of blocks per I/O
     int                 maxppq;     ///< max number of pages per queue
-    int                 maxiopq;    ///< max io submissions per queue
-    void*               ses;        ///< client session
+    int                 maxiopq;    ///< max concurrent I/O per queue
+    void*               ses;        ///< associated session
 } unvme_ns_t;
 
 /// Memory allocated page structure.
 typedef struct _unvme_page {
     void*               buf;        ///< data buffer
-    u64                 slba;       ///< starting lba
-    u16                 nlb;        ///< number of logical blocks to read/write
+    u64                 slba;       ///< starting logical block address
+    u16                 nlb;        ///< number of logical blocks
     u16                 offset;     ///< first buffer offset
-    int                 stat;       ///< page status
+    int                 stat;       ///< I/O status (0 = completed)
     u16                 id;         ///< page id
-    u16                 qid;        ///< client queue id
+    u16                 qid;        ///< session queue id
     void*               data;       ///< application private data
 } unvme_page_t;
 
