@@ -1,0 +1,323 @@
+<html>
+<head>
+<meta http-equiv="content-type" content="text/html;charset=UTF-8">
+<meta name="description" content="UNVMe FAQ">
+<meta name="keywords" content="unvme, nvme, userspace NVMe driver, user space NVMe driver, ssd, userspace driver, user space driver, micron, spdk, github">
+</head>
+
+<body>
+<h1 align="center">UNVMe - Frequently Asked Questions</h1>
+
+<h2 style="color:#000080">Why is Micron interested in a user space NVMe driver?</h2>
+<p>
+Micron Technology is a major producer of nonvolatile memory used in SSD.
+In preparing for a new class of nonvolatile memory
+(<a href="https://www.micron.com/about/emerging-technologies/3d-xpoint-technology">3D XPoint Technology</a>),
+where device access time will be exponentially faster than NAND devices,
+software induced latency becomes significant for every I/O operation.
+We developed a user space driver with the purpose to minimize software
+latency and have seen good results with UNVMe.
+</p>
+
+<h2 style="color:#000080">Why choosing VFIO supported features for UNVMe?</h2>
+<p>
+User space driver generally needs kernel support in order to be able to access
+PCI devices and map user space memory into I/O memory for DMA transfer.
+There are various ways to achieve that, one of which is to develop a
+proprietary kernel module, but we found that VFIO provides exactly what a
+user space driver need and more.
+</p>
+
+<h2 style="color:#000080">Why is the compilation failed with missing linux/vfio.h header file?</h2>
+<p>
+VFIO has been introduced since Linux kernel 3.6 and thus only packaged in
+CentOS 7.  CentOS 6 which comes with kernel 2.6 does not have the VFIO module.
+</p>
+<p>
+In order to support VFIO on CentOS 6, the user will need to build, install,
+and boot a kernel (from the
+<a href="https://www.kernel.org">Linux Kernel Archives</a>)
+that has the VFIO module.
+The user will also need to copy the <i>uapi/linux/vfio.h</i> file from the
+kernel source directory into the <i>/usr/include/linux</i> directory.
+For example:
+</p>
+<pre><code>    $ cp /usr/src/kernels/3.x/include/uapi/linux/vfio.h /usr/include/linux
+</code></pre>
+
+<h2 style="color:#000080">Why are there three different UNVMe models and what are their key differences?</h2>
+<p>
+There are primarily two models:  client-server and client-library.  
+</p>
+<p>
+The client-server model CS reflects the traditional driver, where the driver 
+will run as an independent (<i>unvme</i>) process managing a set of devices,
+and the client applications which are linked with the library
+(<i>libunvme.a</i>) run as different processes sending I/O requests to the
+driver.  This model allows multiple client applications to simultaneously
+accessing one or more devices.  
+</p>
+<p>
+The client-library model merges the application with the driver as one process.
+This model gives better performance but limits an application to exclusively
+own one particular NVMe device.  We've implemented the client-library model
+in two different flavors.  In the TPC model, a thread is created to process
+all I/O completions.  In the APC model, there is no processing thread,
+so upon checking for I/O status, the application will
+then process the NVMe I/O completion queue.
+</p>
+<p>
+Note that the UNVMe driver does not default to control all NVMe devices in
+the system but allows the user to specify a list of NVMe devices for the
+client-server model (i.e. when starting the <i>unvme</i> server), and one
+specific NVMe device for the client-library model (i.e. when starting an
+application) that will be managed by the driver.  
+This enables the user to associate a given device with a particular driver.
+</p>
+<p>
+There are specific advantages to each model, certain applications
+and/or devices may be best suited for certain models.
+</p>
+
+<h2 style="color:#000080">What are the APIs for UNVMe and how are they used?</h2>
+<p>
+The APIs for UNVMe are specified in <i>src/libunvme.h</i> which includes:
+</p>
+
+<table border="0" cellpadding="8">
+<tr>
+<th align="left" valign="top" nowrap><i>unvme_open()</i></th>
+<td>Open a session associated with a device namespace.
+It will return a pointer to unvme_ns_t which contains the device 
+namespace attributes.<br>
+Note that each NVMe device is mapped to a 
+<i>/dev/vfio</i> device used by UNVMe. An application may open multiple 
+sessions, where each session maintains its own set of I/O queues. 
+There's no performance difference to whether one or more sessions 
+being opened.  Performance depends more on the total number of 
+I/O queues and the size of each queue that are created and how 
+those queues are managed by a particular NVMe device.  The limit of total 
+number of I/O queues and the size of each queue that can be 
+created also depend on the device supported features.</td>
+</tr>
+
+<tr>
+<th align="left" valign="top" nowrap><i>unvme_close()</i></th>
+<td>Close an opened session.</td>
+</tr>
+
+<tr>
+<th align="left" valign="top" nowrap><i>unvme_alloc()</i></th>
+<td>Allocate an array of one or more pages from a given I/O queue. 
+There are maximum number of pages available for each I/O queue, 
+enough for an application to concurrently submit up to "queue 
+size - 1" entries of the largest data length supported by a 
+device.  For best performance, allocate pages ahead of time and
+avoid invoking <i>unvme_alloc()</i> in a critical read/write path.  Note 
+that the <i>qid</i> parameter is associated with a namespace session and 
+the first <i>qid</i> of each session is 0.</td>
+
+<tr>
+<th align="left" valign="top" nowrap><i>unvme_free()</i></th>
+<td>Free the allocated page array.</td>
+</tr>
+
+<tr>
+<th align="left" valign="top" nowrap><i>unvme_read()</i></th>
+<td>Submit a synchronous read and return with data upon completion.
+<bp>For all read write requests, the user must set the starting 
+logical block address (<i>slba</i>) and total number of logical blocks 
+(<i>nlb</i>) in the first page of the array.  The page array size will 
+be assumed to correspond with the specified number of logical blocks.</td>
+</tr>
+
+<tr>
+<th align="left" valign="top" nowrap><i>unvme_write()</i></th>
+<td>Submit a synchronous write and return upon completion.</td>
+</tr>
+
+
+<tr>
+<th align="left" valign="top" nowrap><i>unvme_aread()</i></th>
+<td>Submit an asynchronous read request to the device and return 
+immediately.</td>
+</tr>
+
+<tr>
+<th align="left" valign="top" nowrap><i>unvme_awrite()</i></th>
+<td>Submit an asynchronous write request to the device and return immediately.</td>
+</tr>
+
+<tr>
+<th align="left" valign="top" nowrap><i>unvme_poll()</i></th>
+<td>Poll for the completion of a specific page array submitted and 
+return its reference, or NULL if the page has not completed 
+within the specified number of seconds (<i>sec</i>).</td>
+</tr>
+
+<tr>
+<th align="left" valign="top" nowrap><i>unvme_apoll()</i></th>
+<td>Poll on a given queue for any I/O completion and return a 
+completed page array or NULL if none has completed within the 
+specified number of seconds (<i>sec</i>).</td>
+</tr>
+</table>
+
+<p>
+See code examples in the <i>test/unvme</i> directory.
+</p>
+
+<h2 style="color:#000080">Why requiring queue count and queue size parameters in unvme_open()?</h2>
+<p>
+UNVMe lets the application decide how many NVMe I/O queues (and of what size)
+to create.  This enable the application to better tune the performance
+based on the device characteristics (especially for the yet-to-know
+new class of future SSD).  
+</p>
+<p>
+It is suggested, however, that multithreaded applications reserve one thread
+for each I/O queue.
+</p>
+
+<h2 style="color:#000080">What are the APIs used under test/nvme and how are they different than UNVMe?</h2>
+<p>
+UNVMe is designed as an application built on top of an NVMe interface layer
+and utilizing the VFIO kernel supported features.  Both NVMe and VFIO
+functionalities are abstracted as independent components/libraries.
+</p>
+<p>
+The VFIO exported APIs are listed in <i>unvme_vfio.h</i>.
+</p>
+<p>
+The NVMe exported APIs are listed in <i>unvme_nvme.h</i>.
+</p>
+<p>
+These APIs are exported through libunvme.a along with the UNVMe APIs.
+Developers can make use of the VFIO and NVMe APIs to build their own
+version of user space NVMe driver.  Note that only a subset of NVMe data
+structures are defined in the <i>unvme_nvme.h</i> header file.
+</p>
+<p>
+Examples under <i>test/nvme</i> show how to setup and send commands to an NVMe 
+device (independently of UNVMe).  Using direct NVMe APIs must be done
+mutually exclusive with UNVMe.
+</p>
+
+<h2 style="color:#000080">Why using unvme_page_t structure instead of a memory pointer for alloc/free/read/write()?</h2>
+<p>
+The <i>unvme_page_t</i> structure is designed to map well into the NVMe page
+entry (PRP) value.  The page <i>id</i> is actually used as the NVMe command
+ID of each queue.  This eliminates the complexity of allocating command ID
+and translating address from user into I/O space and aligns with the
+purpose of reducing software submission latency overhead.
+</p>
+
+<h2 style="color:#000080">How to boot up CentOS that can support both UNVMe and SPDK?</h2>
+<p>
+UNVMe which depends on the VFIO kernel module requires IOMMU support.
+The boot parameter <i>"intel_iommu=on"</i> must be set (i.e. if the kernel
+is not compiled with <i>CONFIG_INTEL_IOMMU_DEFAULT_ON=y</i>).
+see also the <a href="https://github.com/MicronSSD/unvme/blob/master/README.md">README.md</a> file.
+</p>
+<p>
+Enable IOMMU, however, may cause a problem for running SPDK since it's using
+the DPDK memory allocation which does hupages address translation formula
+which can differ from IOMMU address mapping.
+</p>
+<p>
+One option is to boot the system with <i>"intel_iommu=off"</i> for SPDK and
+<i>"intel_iommu=on"</i> for UNVMe.  
+</p>
+<p>
+A better option that will work for both UNVMe and SPDK is to set the boot
+parameters as IOMMU pass through mode <i>"iommu=pt"</i>, i.e. along
+with <i>"intel_iommu=on"</i>.  Be careful to run the appropriate scripts
+to setup and clean up when switching between UNVMe and SPDK.
+</p>
+<p>
+On CentOS 6, edit the <i>/etc/grub.conf</i> file and add these options to
+the kernel line, e.g.:
+</p>
+<pre><code>    root (hd0, 0)
+    kernel ... intel_iommu=on iommu=pt
+</code></pre>
+<p>
+On CentOS 7, edit the <i>/etc/default/grub</i> file and add these options
+to the <i>GRUB_CMDLINE_LINUX</i> variable, e.g.:
+</p>
+<pre><code>    GRUB_CMDLINE_LINUX="... intel_iommu=on iommu=pt"
+</code></pre>
+<p>
+For the sole purpose of benchmarking to produce a more consistent result set,
+the user may want to turn off CPU power saving mode by adding also these
+two options to the boot parameters:
+</p>
+<pre><code>    ... processor.max_cstate=1 intel_idle.max_cstate=0
+</code></pre>
+
+<h2 style="color:#000080">Are there benchmark results for UNVMe?</h2>
+<p>
+Yes.  Since UNVMe is a custom user space driver, all applications will have
+to be ported to work with UNVMe.  We chose FIO as the initial benchmarking
+tool and built a plugin engine for UNVMe (<i>ioengine/unvme_fio</i>) to run
+with FIO.  Note that the ioengine implementation does not support
+the FIO <i>verify</i> option.
+</p>
+<p>
+Fio results show best performance with the APC model which is due to no thread 
+context switching between application and UNVMe driver.
+</p>
+<p>
+The TPC model performance is close to the APC model.  Although no context
+switch occurs in the submission path (still outstanding submission latency),
+a cost of periodic context switching between the UNVMe completion processing
+thread and the application places it below the APC model.
+</p>
+<p>
+It should be noted that the FIO benchmark results are very specific to
+continuous I/O stress operations.  For an actual application with less
+frequent I/O operations, the TPC model may benefit from having the built-in
+thread processing all I/O completions prior to the application when ready
+to check for status.
+</p>
+<p>
+The more flexible CS model is a bit slower than the APC and TPC library
+models due to more context switching occur in the submission as well as
+completion processing paths (i.e. similar to kernel space driver model).
+</p>
+<p>
+The benchmark results confirm performance advantage of the user space
+NVMe driver over kernel space driver.  
+</p>
+<p>
+We have also implemented an FIO engine for the SPDK
+(<i>ioengine/spdk_fio.c</i>) that the user can run test with.
+</p>
+<p>
+The script <i>test/unvme-benchmark</i> is provided for the user to run
+benchmarks on their own systems.
+A complete benchmark test for a device will take about 6 hours.
+</p>
+
+<h2 style="color:#000080">Why does UNVMe utilize 100% CPU in FIO benchmark testing?</h2>
+<p>
+UNVMe is a polling driver which utilizes CPU when polling for I/O completion
+status, but UNVMe is designed to only poll when there is a pending I/O
+submission.
+</p>
+<p>
+Since FIO is a stress test that does continuous I/O operations (unlike normal
+applications), it will trigger continuous polling that consumes all CPU cycles.
+However, it should be noted that user space process polling actually only
+utilizes CPU cycles that would otherwise be idle, so it actually takes the
+advantage of maximizing CPU usage to gain some performance.
+</p>
+<p>
+A reminding note about UNVMe driver is that it is targeted for very low
+latency class of devices where polling for I/O completion will take much
+less CPU cycles than the current NAND based SSD devices.
+</p>
+
+</body>
+</html>
+

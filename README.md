@@ -89,10 +89,9 @@ model to build when running:
     $ make
 
 CentOS 6 which comes with Linux kernel 2.6 does not have the VFIO module,
-so the header file "/usr/include/linux/vfio.h" does not exist, so UNVMe
-compilation would fail.  The user will need to set the CPPFLAGS in
-Makefile.def to include the kernel source directory with VFIO support
-where linux/vfio.h resides (e.g. CPPFLAGS += -I/usr/src/kernels/3.x/include).
+so the header file "/usr/include/linux/vfio.h" does not exist, and UNVMe
+compilation will fail.  The user will need to copy the header file from the
+kernel source directory include/uapi/linux/vfio.h to /usr/include/linux.
 
 
 A specific model can also be built by explicitly specifying one of the
