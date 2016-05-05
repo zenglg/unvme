@@ -1,0 +1,16 @@
+*.o
+*.*~
+src/.model
+src/libunvme.a
+src/unvme
+fio/t/axmap
+fio/t/fio-btrace2fio
+fio/t/fio-dedupe
+fio/t/fio-genzipf
+fio/t/fio-verify-state
+fio/t/gen-rand
+fio/t/ieee754
+fio/t/lfsr-test
+fio/t/stest
+test/out/
+html/

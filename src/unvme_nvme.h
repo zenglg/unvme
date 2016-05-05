@@ -43,14 +43,18 @@
     #pragma error "only support little endian CPU architecture"
 #endif
 
-#define PAGESHIFT           12      ///< system page size shift
+#define PAGESHIFT           12          ///< system page size shift
 
 #ifndef _UNVME_TYPE
-#define _UNVME_TYPE                 ///< bit size data types
-typedef uint8_t             u8;     ///< 8-bit unsigned
-typedef uint16_t            u16;    ///< 16-bit unsigned
-typedef uint32_t            u32;    ///< 32-bit unsigned
-typedef uint64_t            u64;    ///< 64-bit unsigned
+#define _UNVME_TYPE                     ///< bit size data types
+typedef int8_t              s8;         ///< 8-bit signed
+typedef int16_t             s16;        ///< 16-bit signed
+typedef int32_t             s32;        ///< 32-bit signed
+typedef int64_t             s64;        ///< 64-bit signed
+typedef uint8_t             u8;         ///< 8-bit unsigned
+typedef uint16_t            u16;        ///< 16-bit unsigned
+typedef uint32_t            u32;        ///< 32-bit unsigned
+typedef uint64_t            u64;        ///< 64-bit unsigned
 #endif // _UNVME_TYPE
 
 typedef struct vfio_iommu_type1_dma_map nvme_dma_t; ///< dma map structure
@@ -423,23 +427,20 @@ nvme_queue_t* nvme_setup_adminq(nvme_device_t* dev, int qsize,
                                 void* sqbuf, u64 sqpa, void* cqbuf, u64 cqpa);
 
 nvme_queue_t* nvme_create_ioq(nvme_device_t* dev, int id, int qsize,
-                              void* sqbuf, u64 sqpa, void* cqbuf, u64 cqpa);
+                              void* sqbuf, u64 sqpa, void* cqbuf, u64 cqpa, int ien);
 int nvme_delete_ioq(nvme_queue_t* ioq);
 
-int nvme_cmd_identify(nvme_device_t* dev, int nsid, u64 prp1, u64 prp2);
-int nvme_cmd_get_log_page(nvme_device_t* dev, int nsid,
+int nvme_acmd_identify(nvme_device_t* dev, int nsid, u64 prp1, u64 prp2);
+int nvme_acmd_get_log_page(nvme_device_t* dev, int nsid,
                           int lid, int numd, u64 prp1, u64 prp2);
-int nvme_cmd_create_cq(nvme_queue_t* ioq, u64 prp);
-int nvme_cmd_create_sq(nvme_queue_t* ioq, u64 prp);
-int nvme_cmd_delete_cq(nvme_queue_t* ioq);
-int nvme_cmd_delete_sq(nvme_queue_t* ioq);
+int nvme_acmd_create_cq(nvme_queue_t* ioq, u64 prp, int ien);
+int nvme_acmd_create_sq(nvme_queue_t* ioq, u64 prp);
+int nvme_acmd_delete_cq(nvme_queue_t* ioq);
+int nvme_acmd_delete_sq(nvme_queue_t* ioq);
 
-int nvme_cmd_rw(int opc, nvme_queue_t* ioq, int nsid, int cid,
-                u64 lba, int nb, u64 prp1, u64 prp2);
-int nvme_cmd_read(nvme_queue_t* ioq, int nsid, int cid,
-                  u64 lba, int nb, u64 prp1, u64 prp2);
-int nvme_cmd_write(nvme_queue_t* ioq, int nsid, int cid,
-                   u64 lba, int nb, u64 prp1, u64 prp2);
+int nvme_cmd_rw(int opc, nvme_queue_t* ioq, int nsid, int cid, u64 lba, int nb, u64 prp1, u64 prp2);
+int nvme_cmd_read(nvme_queue_t* ioq, int nsid, int cid, u64 lba, int nb, u64 prp1, u64 prp2);
+int nvme_cmd_write(nvme_queue_t* ioq, int nsid, int cid, u64 lba, int nb, u64 prp1, u64 prp2);
 
 int nvme_check_completion(nvme_queue_t* q, int* stat);
 int nvme_wait_completion(nvme_queue_t* q, int cid, int timeout);

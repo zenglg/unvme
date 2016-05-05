@@ -51,7 +51,7 @@ void unvme_datapool_alloc(unvme_queue_t* ioq)
     size_t statsize = ns->maxppq * sizeof(unvme_piostat_t);
     size_t cpqsize = sizeof(unvme_piocpq_t) + qsize * sizeof(unvme_page_t*);
 
-    DEBUG_FN("%d.%d", dev->vfiodev->id, ioq->nvq->id);
+    DEBUG_FN("%x.%d", dev->vfiodev->pci, ioq->nvq->id);
     unvme_datapool_t* datapool = &ioq->datapool;
     datapool->data = vfio_dma_alloc(dev->vfiodev, datasize);
     if (!datapool->data) FATAL();
@@ -71,7 +71,7 @@ void unvme_datapool_alloc(unvme_queue_t* ioq)
  */
 void unvme_datapool_free(unvme_queue_t* ioq)
 {
-    DEBUG_FN("%d.%d", ioq->ses->dev->vfiodev->id, ioq->nvq->id);
+    DEBUG_FN("%x.%d", ioq->ses->dev->vfiodev->pci, ioq->nvq->id);
     if (vfio_dma_free(ioq->datapool.prplist) ||
         vfio_dma_free(ioq->datapool.data)) FATAL();
     free(ioq->datapool.piostat);
@@ -79,15 +79,15 @@ void unvme_datapool_free(unvme_queue_t* ioq)
 
 /**
  * Open a client session.
- * @param   vfid        vfio device id
+ * @param   pci         PCI device id
  * @param   nsid        namespace id
  * @param   qcount      queue count
  * @param   qsize       queue size
  * @return  newly created session
  */
-unvme_session_t* client_open(int vfid, int nsid, int qcount, int qsize)
+unvme_session_t* client_open(int pci, int nsid, int qcount, int qsize)
 {
-    return unvme_do_open(NULL, vfid, getpid(), nsid, qcount, qsize);
+    return unvme_do_open(NULL, pci, getpid(), nsid, qcount, qsize);
 }
 
 /**

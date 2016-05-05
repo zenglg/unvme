@@ -50,7 +50,7 @@ static unvme_context_t  unvme = { .mutex = PTHREAD_MUTEX_INITIALIZER };
 /*
  * Initialize UNVMe.
  */
-static int do_unvme_init(const char* vfioname, struct thread_data *td)
+static int do_unvme_init(char* pciname, struct thread_data *td)
 {
     pthread_mutex_lock(&unvme.mutex);
     unvme.active++;
@@ -59,13 +59,15 @@ static int do_unvme_init(const char* vfioname, struct thread_data *td)
         int nsid = opt->nsid ? opt->nsid : 1;
         int qc = td->o.numjobs;
         int qd = td->o.iodepth;
-        unvme.ns = unvme_open(vfioname, nsid, qc, qd + 1);
+
+        if (pciname[2] == '.') pciname[2] = ':';
+        unvme.ns = unvme_open(pciname, nsid, qc, qd + 1);
         if (unvme.ns) {
             printf("Model %s\n", unvme.ns->model);
             DEBUG("%s unvme_open %s nsid=%d q=%dx%d",
-                  __func__, vfioname, nsid, qc, qd);
+                  __func__, pciname, nsid, qc, qd);
         } else {
-            error(0, 0, "unvme_open %s failed", vfioname);
+            error(0, 0, "unvme_open %s failed", pciname);
             pthread_mutex_unlock(&unvme.mutex);
             return 1;
         }
@@ -301,6 +303,7 @@ static int fio_unvme_get_file_size(struct thread_data *td, struct fio_file *f)
             error(0, 0, "%s do_unvme_init", __func__);
             return 1;
         }
+        f->filetype = FIO_TYPE_CHAR;
         f->real_file_size = unvme.ns->blockcount * unvme.ns->blocksize;
         fio_file_set_size_known(f);
     }

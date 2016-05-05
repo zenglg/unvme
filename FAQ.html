@@ -87,14 +87,13 @@ The APIs for UNVMe are specified in <i>src/libunvme.h</i> which includes:
 <table border="0" cellpadding="8">
 <tr>
 <th align="left" valign="top" nowrap><i>unvme_open()</i></th>
-<td>Open a session associated with a device namespace.
-It will return a pointer to unvme_ns_t which contains the device 
-namespace attributes.<br>
-Note that each NVMe device is mapped to a 
-<i>/dev/vfio</i> device used by UNVMe. An application may open multiple 
-sessions, where each session maintains its own set of I/O queues. 
+<td>Open a session associated with a device namespace.  It will return
+a pointer to unvme_ns_t (containing the device namespace attributes)
+which is a handle to invoke other APIs.<br>
+Note that an application may open multiple sessions,
+where each session maintains its own set of I/O queues. 
 There's no performance difference to whether one or more sessions 
-being opened.  Performance depends more on the total number of 
+being opened.  The performance depends more on the total number of 
 I/O queues and the size of each queue that are created and how 
 those queues are managed by a particular NVMe device.  The limit of total 
 number of I/O queues and the size of each queue that can be 
@@ -139,13 +138,16 @@ be assumed to correspond with the specified number of logical blocks.</td>
 
 <tr>
 <th align="left" valign="top" nowrap><i>unvme_aread()</i></th>
-<td>Submit an asynchronous read request to the device and return 
-immediately.</td>
+<td>Submit an asynchronous read request to the device and return immediately.
+Results then can be checked using <i>unvme_poll()</i> or <i>unvme_apoll()</i>.
+</td>
 </tr>
 
 <tr>
 <th align="left" valign="top" nowrap><i>unvme_awrite()</i></th>
-<td>Submit an asynchronous write request to the device and return immediately.</td>
+<td>Submit an asynchronous write request to the device and return immediately.
+Results then can be checked using <i>unvme_poll()</i> or <i>unvme_apoll()</i>.
+</td>
 </tr>
 
 <tr>
@@ -175,8 +177,9 @@ based on the device characteristics (especially for the yet-to-know
 new class of future SSD).  
 </p>
 <p>
-It is suggested, however, that multithreaded applications reserve one thread
-for each I/O queue.
+Note that for multithreaded applications, a thread can invoke and process
+one or more I/O queues, but an I/O queue can only be processed by a single
+thread.  It is suggested that each I/O queue is managed by a separate thread.
 </p>
 
 <h2 style="color:#000080">What are the APIs used under test/nvme and how are they different than UNVMe?</h2>
@@ -257,15 +260,15 @@ two options to the boot parameters:
 
 <h2 style="color:#000080">Are there benchmark results for UNVMe?</h2>
 <p>
-Yes.  Since UNVMe is a custom user space driver, all applications will have
+Yes.  Since UNVMe is a custom user space driver, applications will have
 to be ported to work with UNVMe.  We chose FIO as the initial benchmarking
 tool and built a plugin engine for UNVMe (<i>ioengine/unvme_fio</i>) to run
 with FIO.  Note that the ioengine implementation does not support
 the FIO <i>verify</i> option.
 </p>
 <p>
-Fio results show best performance with the APC model which is due to no thread 
-context switching between application and UNVMe driver.
+Fio results show best submission latency time with the APC model which
+is due to no thread context switching between application and the UNVMe driver.
 </p>
 <p>
 The TPC model performance is close to the APC model.  Although no context
@@ -274,29 +277,27 @@ a cost of periodic context switching between the UNVMe completion processing
 thread and the application places it below the APC model.
 </p>
 <p>
-It should be noted that the FIO benchmark results are very specific to
-continuous I/O stress operations.  For an actual application with less
-frequent I/O operations, the TPC model may benefit from having the built-in
-thread processing all I/O completions prior to the application when ready
-to check for status.
-</p>
-<p>
 The more flexible CS model is a bit slower than the APC and TPC library
 models due to more context switching occur in the submission as well as
 completion processing paths (i.e. similar to kernel space driver model).
 </p>
 <p>
-The benchmark results confirm performance advantage of the user space
-NVMe driver over kernel space driver.  
+It should be noted that the FIO benchmark results are very specific to
+continuous I/O stress operations.  For an actual application with less
+frequent I/O operations, performance results may be different.
+The TPC model, for example, may benefit from having the built-in
+thread processing all I/O completions prior to the time an application
+is checking for status, so it may outperform the APC model.
 </p>
 <p>
 We have also implemented an FIO engine for the SPDK
 (<i>ioengine/spdk_fio.c</i>) that the user can run test with.
+However, the SPDK APIs have changed since and it may no longer be compatible.
 </p>
 <p>
 The script <i>test/unvme-benchmark</i> is provided for the user to run
 benchmarks on their own systems.
-A complete benchmark test for a device will take about 6 hours.
+A complete benchmark test run for a device will take about 6 hours.
 </p>
 
 <h2 style="color:#000080">Why does UNVMe utilize 100% CPU in FIO benchmark testing?</h2>

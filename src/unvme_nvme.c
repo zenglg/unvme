@@ -163,7 +163,7 @@ static int nvme_ctlr_enable(nvme_device_t* dev, nvme_controller_config_t cc)
  */
 static void nvme_submit_cmd(nvme_queue_t* q)
 {
-    HEX_DUMP(&q->sq[q->sq_tail], sizeof(nvme_sq_entry_t));
+    //HEX_DUMP(&q->sq[q->sq_tail], sizeof(nvme_sq_entry_t));
     if (++q->sq_tail == q->size) q->sq_tail = 0;
     w32(q->dev, q->sq_doorbell, q->sq_tail);
 }
@@ -234,7 +234,7 @@ int nvme_wait_completion(nvme_queue_t* q, int cid, int timeout)
  * @param   prp2        PRP2 address
  * @return  completion status (0 if ok).
  */
-int nvme_cmd_identify(nvme_device_t* dev, int nsid, u64 prp1, u64 prp2)
+int nvme_acmd_identify(nvme_device_t* dev, int nsid, u64 prp1, u64 prp2)
 {
     nvme_queue_t* adminq = &dev->adminq;
     int cid = adminq->sq_tail;
@@ -248,7 +248,7 @@ int nvme_cmd_identify(nvme_device_t* dev, int nsid, u64 prp1, u64 prp2)
     cmd->common.prp2 = prp2;
     cmd->cns = nsid == 0 ? 1 : 0;
 
-    DEBUG_FN("cid=%#x nsid=%d (A)", cid, nsid);
+    DEBUG_FN("cid=%#x nsid=%d", cid, nsid);
     nvme_submit_cmd(adminq);
     return nvme_wait_completion(adminq, cid, 30);
 }
@@ -264,8 +264,8 @@ int nvme_cmd_identify(nvme_device_t* dev, int nsid, u64 prp1, u64 prp2)
  * @param   prp2        PRP2 address
  * @return  completion status (0 if ok).
  */
-int nvme_cmd_get_log_page(nvme_device_t* dev, int nsid,
-                          int lid, int numd, u64 prp1, u64 prp2)
+int nvme_acmd_get_log_page(nvme_device_t* dev, int nsid,
+                           int lid, int numd, u64 prp1, u64 prp2)
 {
     nvme_queue_t* adminq = &dev->adminq;
     int cid = adminq->sq_tail;
@@ -280,7 +280,7 @@ int nvme_cmd_get_log_page(nvme_device_t* dev, int nsid,
     cmd->lid = lid;
     cmd->numd = numd;
 
-    DEBUG_FN("cid=%#x lid=%d (A)", cid, lid);
+    DEBUG_FN("cid=%#x lid=%d", cid, lid);
     nvme_submit_cmd(adminq);
     return nvme_wait_completion(adminq, cid, 30);
 }
@@ -290,9 +290,10 @@ int nvme_cmd_get_log_page(nvme_device_t* dev, int nsid,
  * Submit the command and wait for completion.
  * @param   ioq         io queue
  * @param   prp         PRP1 address
+ * @param   ien         interrups enabled
  * @return  0 if ok, else -1.
  */
-int nvme_cmd_create_cq(nvme_queue_t* ioq, u64 prp)
+int nvme_acmd_create_cq(nvme_queue_t* ioq, u64 prp, int ien)
 {
     nvme_queue_t* adminq = &ioq->dev->adminq;
     int cid = adminq->sq_tail;
@@ -305,8 +306,10 @@ int nvme_cmd_create_cq(nvme_queue_t* ioq, u64 prp)
     cmd->pc = 1;
     cmd->qid = ioq->id;
     cmd->qsize = ioq->size - 1;
+    cmd->ien = ien;
+    cmd->iv = ioq->id;
 
-    DEBUG_FN("q=%d cid=%#x qs=%d (A)", ioq->id, cid, ioq->size);
+    DEBUG_FN("q=%d cid=%#x qs=%d ien=%d", ioq->id, cid, ioq->size, ien);
     nvme_submit_cmd(adminq);
     return nvme_wait_completion(adminq, cid, 30);
 }
@@ -318,7 +321,7 @@ int nvme_cmd_create_cq(nvme_queue_t* ioq, u64 prp)
  * @param   prp         PRP1 address
  * @return  0 if ok, else -1.
  */
-int nvme_cmd_create_sq(nvme_queue_t* ioq, u64 prp)
+int nvme_acmd_create_sq(nvme_queue_t* ioq, u64 prp)
 {
     nvme_queue_t* adminq = &ioq->dev->adminq;
     int cid = adminq->sq_tail;
@@ -334,7 +337,7 @@ int nvme_cmd_create_sq(nvme_queue_t* ioq, u64 prp)
     cmd->cqid = ioq->id;
     cmd->qsize = ioq->size - 1;
 
-    DEBUG_FN("q=%d cid=%#x qs=%d (A)", ioq->id, cid, ioq->size);
+    DEBUG_FN("q=%d cid=%#x qs=%d", ioq->id, cid, ioq->size);
     nvme_submit_cmd(adminq);
     return nvme_wait_completion(adminq, cid, 30);
 }
@@ -346,7 +349,7 @@ int nvme_cmd_create_sq(nvme_queue_t* ioq, u64 prp)
  * @param   opc         op code
  * @return  0 if ok else error code.
  */
-static int nvme_cmd_delete_ioq(nvme_queue_t* ioq, int opc)
+static int nvme_acmd_delete_ioq(nvme_queue_t* ioq, int opc)
 {
     nvme_queue_t* adminq = &ioq->dev->adminq;
     int cid = adminq->sq_tail;
@@ -357,7 +360,7 @@ static int nvme_cmd_delete_ioq(nvme_queue_t* ioq, int opc)
     cmd->common.cid = cid;
     cmd->qid = ioq->id;
 
-    DEBUG_FN("%cq=%d cid=%#x (A)",
+    DEBUG_FN("%cq=%d cid=%#x",
              opc == NVME_ACMD_DELETE_CQ ? 'c' : 's', ioq->id, cid);
     nvme_submit_cmd(adminq);
     return nvme_wait_completion(adminq, cid, 30);
@@ -369,9 +372,9 @@ static int nvme_cmd_delete_ioq(nvme_queue_t* ioq, int opc)
  * @param   ioq         io queue
  * @return  0 if ok else error code.
  */
-int nvme_cmd_delete_sq(nvme_queue_t* ioq)
+int nvme_acmd_delete_sq(nvme_queue_t* ioq)
 {
-    return nvme_cmd_delete_ioq(ioq, NVME_ACMD_DELETE_SQ);
+    return nvme_acmd_delete_ioq(ioq, NVME_ACMD_DELETE_SQ);
 }
 
 /**
@@ -380,9 +383,9 @@ int nvme_cmd_delete_sq(nvme_queue_t* ioq)
  * @param   ioq         io queue
  * @return  0 if ok else error code.
  */
-int nvme_cmd_delete_cq(nvme_queue_t* ioq)
+int nvme_acmd_delete_cq(nvme_queue_t* ioq)
 {
-    return nvme_cmd_delete_ioq(ioq, NVME_ACMD_DELETE_CQ);
+    return nvme_acmd_delete_ioq(ioq, NVME_ACMD_DELETE_CQ);
 }
 
 /**
@@ -398,7 +401,7 @@ int nvme_cmd_delete_cq(nvme_queue_t* ioq)
  * @return  0 if ok else -1.
  */
 inline int nvme_cmd_rw(int opc, nvme_queue_t* ioq, int nsid,
-            int cid, u64 lba, int nb, u64 prp1, u64 prp2)
+                       int cid, u64 lba, int nb, u64 prp1, u64 prp2)
 {
     nvme_command_rw_t* cmd = &ioq->sq[ioq->sq_tail].rw;
 
@@ -428,7 +431,7 @@ inline int nvme_cmd_rw(int opc, nvme_queue_t* ioq, int nsid,
  * @return  0 if ok else -1.
  */
 int nvme_cmd_read(nvme_queue_t* ioq, int nsid,
-              int cid, u64 lba, int nb, u64 prp1, u64 prp2)
+                  int cid, u64 lba, int nb, u64 prp1, u64 prp2)
 {
     return nvme_cmd_rw(NVME_CMD_READ, ioq, nsid, cid, lba, nb, prp1, prp2);
 }
@@ -459,10 +462,11 @@ int nvme_cmd_write(nvme_queue_t* ioq, int nsid,
  * @param   sqpa        submission queue IO physical address
  * @param   cqbuf       completion queue buffer
  * @param   cqpa        admin completion IO physical address
+ * @param   ien         interrupts enabled
  * @return  pointer to the created io queue or NULL if failure.
  */
 nvme_queue_t* nvme_create_ioq(nvme_device_t* dev, int id, int qsize,
-                void* sqbuf, u64 sqpa, void* cqbuf, u64 cqpa)
+                          void* sqbuf, u64 sqpa, void* cqbuf, u64 cqpa, int ien)
 {
     nvme_queue_t* ioq = zalloc(sizeof(*ioq));
     ioq->dev = dev;
@@ -473,7 +477,7 @@ nvme_queue_t* nvme_create_ioq(nvme_device_t* dev, int id, int qsize,
     ioq->sq_doorbell = dev->reg->sq0tdbl + (2 * id * dev->dbstride);
     ioq->cq_doorbell = ioq->sq_doorbell + dev->dbstride;
 
-    if (nvme_cmd_create_cq(ioq, cqpa) | nvme_cmd_create_sq(ioq, sqpa)) {
+    if (nvme_acmd_create_cq(ioq, cqpa, ien) | nvme_acmd_create_sq(ioq, sqpa)) {
         free(ioq);
         return NULL;
     }
@@ -487,7 +491,7 @@ nvme_queue_t* nvme_create_ioq(nvme_device_t* dev, int id, int qsize,
  */
 int nvme_delete_ioq(nvme_queue_t* ioq)
 {
-    if (nvme_cmd_delete_sq(ioq) | nvme_cmd_delete_cq(ioq)) return -1;
+    if (nvme_acmd_delete_sq(ioq) | nvme_acmd_delete_cq(ioq)) return -1;
     free(ioq);
     return 0;
 }

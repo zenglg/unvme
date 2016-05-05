@@ -50,14 +50,14 @@ static void no_progname(void) {}
 /**
  * NVMe setup.
  */
-static void nvme_setup(const char* vfioname, int aqsize)
+static void nvme_setup(const char* pciname, int aqsize)
 {
-    int vfid;
-    if (sscanf(vfioname, "/dev/vfio/%d", &vfid) != 1) {
-        error(1, 0, "invalid device name %s", vfioname);
+    int b, d, f;
+    if (sscanf(pciname, "%02x:%02x.%1x", &b, &d, &f) != 3) {
+        error(1, 0, "invalid PCI device %s (expect BB:DD.F format)", pciname);
     }
-
-    vfiodev = vfio_create(vfid);
+    int pci = (b << 16) + (d << 8) + f;
+    vfiodev = vfio_create(pci);
     if (!vfiodev) error(1, 0, "vfio_create");
     nvmedev = nvme_create(vfiodev->fd);
     if (!nvmedev) error(1, 0, "nvme_create");

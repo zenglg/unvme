@@ -42,12 +42,15 @@
 
 #ifndef _UNVME_TYPE
 #define _UNVME_TYPE                 ///< bit size data types
+typedef int8_t          s8;         ///< 8-bit signed
+typedef int16_t         s16;        ///< 16-bit signed
+typedef int32_t         s32;        ///< 32-bit signed
+typedef int64_t         s64;        ///< 64-bit signed
 typedef uint8_t         u8;         ///< 8-bit unsigned
 typedef uint16_t        u16;        ///< 16-bit unsigned
 typedef uint32_t        u32;        ///< 32-bit unsigned
 typedef uint64_t        u64;        ///< 64-bit unsigned
 #endif // _UNVME_TYPE
-
 
 #define UNVME_TIMEOUT   60          ///< I/O timeout in seconds
 
@@ -87,7 +90,7 @@ typedef struct _unvme_page {
 
 
 // Export functions
-const unvme_ns_t* unvme_open(const char* vfio, int nsid, int qcount, int qsize);
+const unvme_ns_t* unvme_open(const char* pciname, int nsid, int qcount, int qsize);
 int unvme_close(const unvme_ns_t* ns);
 
 unvme_page_t* unvme_alloc(const unvme_ns_t* ns, int qid, int numpages);
@@ -100,6 +103,7 @@ int unvme_awrite(const unvme_ns_t* ns, unvme_page_t* pa);
 
 unvme_page_t* unvme_poll(const unvme_ns_t* ns, unvme_page_t* pa, int sec);
 unvme_page_t* unvme_apoll(const unvme_ns_t* ns, int qid, int sec);
+
 
 #endif // _LIBUNVME_H
 

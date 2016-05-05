@@ -113,7 +113,7 @@ void print_firmware_slot(void* buf)
  */
 int main(int argc, char* argv[])
 {
-    const char* usage = "Usage: %s vfioname nsid log_page_id\n\
+    const char* usage = "Usage: %s pciname nsid log_page_id\n\
 where\n\
       log_page_id 1 = error information\n\
       log_page_id 2 = SMART / Health information\n\
@@ -135,8 +135,8 @@ where\n\
     int numd = dma->size / sizeof(u32) - 1;
     u64 prp1 = dma->addr;
     u64 prp2 = dma->addr + (1 << PAGESHIFT);
-    int err = nvme_cmd_get_log_page(nvmedev, nsid, lid, numd, prp1, prp2);
-    if (err) error(1, 0, "nvme_cmd_get_log_page");
+    int err = nvme_acmd_get_log_page(nvmedev, nsid, lid, numd, prp1, prp2);
+    if (err) error(1, 0, "nvme_acmd_get_log_page");
 
     switch (lid) {
         case 1: print_error_info(dma->buf); break;

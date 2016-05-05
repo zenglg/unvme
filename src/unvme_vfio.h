@@ -51,13 +51,14 @@ typedef struct _vfio_dma {
 
 /// VFIO device structure
 typedef struct _vfio_device {
-    int                     id;         ///< device id
+    int                     pci;        ///< PCI device number
     int                     fd;         ///< device descriptor
 } vfio_device_t;
 
-
 // Export functions
-vfio_device_t* vfio_create(int vfid);
+vfio_device_t* vfio_create(int pci);
+int vfio_msix_enable(vfio_device_t* vdev, int start, int nvec, __s32* efds);
+int vfio_msix_disable(vfio_device_t* vdev);
 void vfio_delete(vfio_device_t* vdev);
 vfio_dma_t* vfio_dma_map(vfio_device_t* vdev, size_t size, void* pmb);
 int vfio_dma_unmap(vfio_dma_t* dma);

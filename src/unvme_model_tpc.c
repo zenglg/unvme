@@ -47,7 +47,7 @@ int unvme_model = UNVME_MODEL_TPC;
  */
 void unvme_session_create_ext(unvme_session_t* ses)
 {
-    unvme_tpc_create(ses);
+    if (ses->id > 0) unvme_tpc_create(ses);
 }
 
 /**
@@ -57,6 +57,6 @@ void unvme_session_create_ext(unvme_session_t* ses)
  */
 void unvme_session_delete_ext(unvme_session_t* ses)
 {
-    unvme_tpc_delete(ses);
+    if (ses->id > 0) unvme_tpc_delete(ses);
 }
 

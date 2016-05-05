@@ -45,21 +45,17 @@ unvme_client_t  client = {  .lock = PTHREAD_MUTEX_INITIALIZER,
 
 /**
  * Open a client session to create io queues.
- * @param   vfioname    vfio device filename
+ * @param   pciname     PCI device name (as BB:DD.F format)
  * @param   nsid        namespace id
  * @param   qcount      number of io queues
  * @param   qsize       io queue size
  * @return  namespace pointer or NULL if error.
  */
-const unvme_ns_t* unvme_open(const char* vfioname, int nsid, int qcount, int qsize)
+const unvme_ns_t* unvme_open(const char* pciname, int nsid, int qcount, int qsize)
 {
-    int vfid;
-    if (sscanf(vfioname, "/dev/vfio/%d", &vfid) != 1) {
-        ERROR("invalid vfio device name %s", vfioname);
-        return NULL;
-    }
-    if (access(vfioname, F_OK)) {
-        ERROR("no %s", vfioname);
+    int b, d, f;
+    if (sscanf(pciname, "%02x:%02x.%1x", &b, &d, &f) != 3) {
+        ERROR("invalid PCI device %s (expect BB:DD.F format)", pciname);
         return NULL;
     }
     if (qcount < 1 || qsize < 2) {
@@ -67,8 +63,10 @@ const unvme_ns_t* unvme_open(const char* vfioname, int nsid, int qcount, int qsi
         return NULL;
     }
 
+    int pci = (b << 16) + (d << 8) + f;
+
     pthread_mutex_lock(&client.lock);
-    unvme_session_t* ses = client_open(vfid, nsid, qcount, qsize);
+    unvme_session_t* ses = client_open(pci, nsid, qcount, qsize);
     if (ses && !client.ses) client.ses = ses;
     pthread_mutex_unlock(&client.lock);
     return ses ? &ses->ns : NULL;
@@ -165,7 +163,7 @@ int unvme_free(const unvme_ns_t* ns, unvme_page_t* pa)
 }
 
 /**
- * Read a page and then poll to wait for completion.
+ * Read a page array and then poll to wait for completion.
  * @param   ns          namespace handle
  * @param   pa          page array
  * @return  0 if ok else error code.
@@ -178,7 +176,7 @@ int unvme_read(const unvme_ns_t* ns, unvme_page_t* pa)
 }
 
 /**
- * Write a page and then poll to wait for completion.
+ * Write a page array and then poll to wait for completion.
  * @param   ns          namespace handle
  * @param   pa          page array
  * @return  0 if ok else error code.
@@ -191,7 +189,7 @@ int unvme_write(const unvme_ns_t* ns, unvme_page_t* pa)
 }
 
 /**
- * Read a page asynchronously (caller is to poll for completion).
+ * Read a page array asynchronously (caller is to poll for completion).
  * @param   ns          namespace handle
  * @param   pa          page array
  * @return  0 if ok else error code.
@@ -202,7 +200,7 @@ int unvme_aread(const unvme_ns_t* ns, unvme_page_t* pa)
 }
 
 /**
- * Write a page asynchronously (caller is to poll for completion).
+ * Write a page array asynchronously (caller is to poll for completion).
  * @param   ns          namespace handle
  * @param   pa          page array
  * @return  0 if ok else error code.
@@ -211,3 +209,4 @@ int unvme_awrite(const unvme_ns_t* ns, unvme_page_t* pa)
 {
     return client_rw(ns, pa, NVME_CMD_WRITE);
 }
+

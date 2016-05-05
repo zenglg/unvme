@@ -55,7 +55,7 @@
                         t, (p)->qid, (p)->id, (p)->slba, (p)->nlb, (p)->stat)
 
 // Global variables
-static char* vfioname;      ///< vfio device name
+static char* pciname;       ///< PCI device name
 static int nsid = 1;        ///< namespace id
 static int numses = 14;     ///< number of thread sessions
 static int qcount = 2;      ///< number of queues to create
@@ -80,7 +80,7 @@ void* test_session(void* arg)
     int tid = sesid + 1;
 
     printf("Thread #%d started\n", tid);
-    const unvme_ns_t* ns = unvme_open(vfioname, nsid, qcount, qsize);
+    const unvme_ns_t* ns = unvme_open(pciname, nsid, qcount, qsize);
     if (!ns) ERROR("unvme_open t=%d qc=%d qs=%d failed", tid, qcount, qsize);
 
     // max number of IO unique address spaces available for a thread session
@@ -204,7 +204,7 @@ next:
 int main(int argc, char* argv[])
 {
     const char* usage =
-"Usage: %s [OPTION]... vfioname\n\
+"Usage: %s [OPTION]... pciname\n\
          -n       nsid (default to 1)\n\
          -t       number of thread sessions (default 14)\n\
          -q       number of IO queues per thread (default 2)\n\
@@ -212,7 +212,7 @@ int main(int argc, char* argv[])
          -m       minimum IO blockcount (default 1)\n\
          -x       maximum IO blockcount (depends on block size)\n\
          -l       number of test loop iterations\n\
-         vfioname vfio device pathname\n";
+         pciname  PCI device name (as BB:DD.F format)\n";
 
     char* prog = strrchr(argv[0], '/');
     prog = prog ? prog + 1 : argv[0];
@@ -248,15 +248,20 @@ int main(int argc, char* argv[])
         }
     }
     if (optind >= argc) error(1, 0, usage, prog);
-    vfioname = argv[optind];
+    pciname = argv[optind];
 
     printf("MULTI-SESSION TEST BEGIN\n");
     printf("threadcount=%d nsid=%d qcount=%d qsize=%d\n",
            numses, nsid, qcount, qsize);
 
     // open device to validate maxbpio
-    const unvme_ns_t* ns = unvme_open(vfioname, nsid, qcount, qsize);
+    const unvme_ns_t* ns = unvme_open(pciname, nsid, qcount, qsize);
     if (!ns) error(1, 0, "unvme_open failed");
+    if (!strcmp(ns->model, "INT")) {
+        printf("This test is not applicable for model %s\n", ns->model);
+        unvme_close(ns);
+        return 0;
+    }
     if (!maxbpio) maxbpio = ns->maxbpio;
     if (((minbpio <= 0)) || (minbpio > maxbpio) || (maxbpio > ns->maxbpio)) {
         error(1, 0, "invalid IO block range (min=%d max=%d)", minbpio, maxbpio);

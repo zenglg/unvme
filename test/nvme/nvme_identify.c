@@ -106,7 +106,7 @@ void print_controller(void* buf)
  */
 int main(int argc, char* argv[])
 {
-    const char* usage = "Usage: %s vfioname [nsid]\n\
+    const char* usage = "Usage: %s pciname [nsid]\n\
 Specify nsid to identify specific namespace\n";
 
     error_print_progname = no_progname;
@@ -122,8 +122,8 @@ Specify nsid to identify specific namespace\n";
     vfio_dma_t* dma = vfio_dma_alloc(vfiodev, 8192);
     if (!dma) error(1, 0, "vfio_dma_alloc");
 
-    int err = nvme_cmd_identify(nvmedev, nsid, dma->addr, dma->addr + 4096);
-    if (err) error(1, 0, "nvme_cmd_identify");
+    int err = nvme_acmd_identify(nvmedev, nsid, dma->addr, dma->addr + 4096);
+    if (err) error(1, 0, "nvme_acmd_identify");
 
     if (nsid) print_namespace(dma->buf);
     else print_controller(dma->buf);

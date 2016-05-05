@@ -45,12 +45,12 @@ extern unvme_client_t client;
  * Map the client server interface.
  * @param   csif        interface handle
  * @param   ses         session
- * @param   vfid        vfio device number
+ * @param   pci         PCI device number
  */
-static void csif_map(unvme_csif_t* csif, unvme_session_t* ses, int vfid)
+static void csif_map(unvme_csif_t* csif, unvme_session_t* ses, int pci)
 {
     char path[32];
-    sprintf(path, "/unvme.csif.%d.%d", vfid, ses ? ses->id : 0);
+    sprintf(path, "/unvme.csif.%x.%d", pci, ses ? ses->id : 0);
     csif->sf = shm_map(path);
     if (!csif->sf) exit(1);
     csif->lock = (pthread_spinlock_t*)csif->sf->buf;
@@ -113,15 +113,15 @@ static inline void csif_ioq(unvme_csif_t* csif, int qid, unvme_msg_t* msg)
 /**
  * Map the data pool.
  * @param   q           client queue
- * @param   vfid        vfio device number
+ * @param   pci         PCI device number
  * @param   qid         queue id
  */
-static void datapool_map(unvme_queue_t* q, int vfid, int qid)
+static void datapool_map(unvme_queue_t* q, int pci, int qid)
 {
     size_t datasize = q->ses->ns.maxppq * q->ses->ns.pagesize;
     size_t statsize = q->ses->ns.maxppq * sizeof(unvme_piostat_t);
     char path[32];
-    sprintf(path, "/unvme.data.%d.%d.%d", vfid, q->ses->id, qid);
+    sprintf(path, "/unvme.data.%x.%d.%d", pci, q->ses->id, qid);
     q->datapool.sf = shm_map(path);
     if (!q->datapool.sf) exit(1);
     q->datapool.piostat = q->datapool.sf->buf + datasize;
@@ -139,16 +139,16 @@ static inline void datapool_unmap(unvme_queue_t* q)
 
 /**
  * Open a client session.
- * @param   vfid        vfio device id
+ * @param   pci         PCI device number
  * @param   nsid        namespace id
  * @param   qcount      queue count
  * @param   qsize       queue size
  * @return  newly created session
  */
-unvme_session_t* client_open(int vfid, int nsid, int qcount, int qsize)
+unvme_session_t* client_open(int pci, int nsid, int qcount, int qsize)
 {
     unvme_session_t* ses = NULL;
-    if (!client.csif.msgbuf) csif_map(&client.csif, NULL, vfid);
+    if (!client.csif.msgbuf) csif_map(&client.csif, NULL, pci);
     unvme_msg_t* msg = client.csif.msgbuf;
 
     // only one client process can access the admin message at a time
@@ -174,9 +174,9 @@ unvme_session_t* client_open(int vfid, int nsid, int qcount, int qsize)
     int i;
     for (i = 0; i < ses->qcount; i++) {
         ses->queues[i].ses = ses;
-        datapool_map(ses->queues + i, vfid, ses->id + i);
+        datapool_map(ses->queues + i, pci, ses->id + i);
     }
-    csif_map(&ses->csif, ses, vfid);
+    csif_map(&ses->csif, ses, pci);
 
     if (!client.ses) {
         client.ses = ses;

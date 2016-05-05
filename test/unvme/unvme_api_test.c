@@ -31,7 +31,7 @@
 
 /**
  * @file
- * @brief UNVMe basic API test.
+ * @brief UNVMe all API test.
  */
 
 #include <stdio.h>
@@ -61,11 +61,11 @@ static int verbose = 0;     ///< verbose flag useful for debugging
 /**
  * Open wrapper function.
  */
-static const unvme_ns_t* do_open(const char* vfioname, int nsid, int qc, int qs)
+static const unvme_ns_t* do_open(const char* pciname, int nsid, int qc, int qs)
 {
     errno = 0;
-    VPRINT("open %s nsid=%d qc=%d qs=%d", vfioname, nsid, qc, qs);
-    const unvme_ns_t* ns = unvme_open(vfioname, nsid, qc, qs);
+    VPRINT("open %s nsid=%d qc=%d qs=%d", pciname, nsid, qc, qs);
+    const unvme_ns_t* ns = unvme_open(pciname, nsid, qc, qs);
     if (!ns) ERROR("unvme_open");
     return ns;
 }
@@ -205,14 +205,14 @@ static void elapsed_time(struct timeval* t0)
 int main(int argc, char* argv[])
 {
     const char* usage =
-"Usage: %s [OPTION]... vfioname\n\
+"Usage: %s [OPTION]... pciname\n\
          -v       verbose\n\
          -p       pause between tests\n\
          -n       nsid (default 1)\n\
          -q       number of IO queues to create (default 4)\n\
          -d       IO queue size (default 256)\n\
          -l       test loop count (default 1)\n\
-         vfioname vfio device name\n";
+         pciname  PCI device name (as BB:DD.F format)\n";
 
     const char* prog = strrchr(argv[0], '/');
     prog = prog ? prog + 1 : argv[0];
@@ -250,11 +250,11 @@ int main(int argc, char* argv[])
         }
     }
     if (optind >= argc) error(1, 0, usage, prog);
-    char* vfioname = argv[optind];
+    char* pciname = argv[optind];
 
-    printf("TEST BEGIN\n");
-    const unvme_ns_t* ns = do_open(vfioname, nsid, qcount, qsize);
-    printf("# Open: %s qc=%d qd=%d ps=%d bs=%d nb=%lu model=%s\n", vfioname,
+    printf("API TEST BEGIN\n");
+    const unvme_ns_t* ns = do_open(pciname, nsid, qcount, qsize);
+    printf("# Open: %s qc=%d qd=%d ps=%d bs=%d nb=%lu model=%s\n", pciname,
          qcount, qsize, ns->pagesize, ns->blocksize, ns->blockcount, ns->model);
 
     int lbaskip = 2 * ns->nbpp;
@@ -480,7 +480,7 @@ int main(int argc, char* argv[])
     free(qpa);
     do_close(ns);
 
-    printf("TEST COMPLETE\n");
+    printf("API TEST COMPLETE\n");
     return 0;
 }
 

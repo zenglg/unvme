@@ -57,14 +57,14 @@ static int loop = 10;           ///< loop count
 int main(int argc, char* argv[])
 {
     const char* usage =
-"Usage: %s [OPTION]... vfioname\n\
+"Usage: %s [OPTION]... pciname\n\
          -n       nsid (default to 1)\n\
          -q       first process queue count (default 8)\n\
          -Q       second process queue count (default 12)\n\
          -d       first process queue size (default 8)\n\
          -D       second process queue size (default 12)\n\
          -l       loop count (default 10)\n\
-         vfioname vfio device pathname\n";
+         pciname  PCI device name (as BB:DD.F format)\n";
 
     char* prog = strrchr(argv[0], '/');
     prog = prog ? prog + 1 : argv[0];
@@ -100,12 +100,12 @@ int main(int argc, char* argv[])
         }
     }
     if (optind >= argc) error(1, 0, usage, prog);
-    char* vfioname = argv[optind];
+    char* pciname = argv[optind];
 
-    const unvme_ns_t* ns = unvme_open(vfioname, nsid, qcount1, qsize1);
+    const unvme_ns_t* ns = unvme_open(pciname, nsid, qcount1, qsize1);
     if (!ns) error(1, 0, "unvme_open failed");
-    if (!strstr(ns->model, "CS")) {
-        printf("This test is not applicable for model %s\n", ns->model);
+    if (strcmp(ns->model, "CS")) {
+        printf("This test is only for model CS\n");
         unvme_close(ns);
         return 0;
     }
@@ -128,7 +128,7 @@ int main(int argc, char* argv[])
 
     int i;
     for (i = 0; i < loop; i++) {
-        ns = unvme_open(vfioname, nsid, qcount, qsize);
+        ns = unvme_open(pciname, nsid, qcount, qsize);
         if (!ns) error(1, 0, "%d: unvme_open #%d failed", pid, i);
         printf("%d: open/close q=%d-%d\n", pid, ns->sid, ns->sid + qcount - 1);
         unvme_close(ns);

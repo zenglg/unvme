@@ -234,12 +234,12 @@ void run_test(const char* name, void *(thread)(void*))
 int main(int argc, char* argv[])
 {
     const char* usage =
-"Usage: %s [OPTION]... vfioname\n\
+"Usage: %s [OPTION]... pciname\n\
          -n       nsid (default to 1)\n\
          -q       queue count (default 1)\n\
          -d       queue size (default 8)\n\
          -t       run time in seconds (default 30)\n\
-         vfioname vfio device pathname\n";
+         pciname  PCI device name (as BB:DD.F) format\n";
 
     char* prog = strrchr(argv[0], '/');
     prog = prog ? prog + 1 : argv[0];
@@ -266,13 +266,13 @@ int main(int argc, char* argv[])
         }
     }
     if (optind >= argc) error(1, 0, usage, prog);
-    char* vfioname = argv[optind];
+    char* pciname = argv[optind];
 
     printf("UNVMe %s latency test qc=%d qd=%d sec=%ldtsc\n",
-           vfioname, qcount, qsize, rdtsc_second());
+           pciname, qcount, qsize, rdtsc_second());
 
-    ns = unvme_open(vfioname, nsid, qcount, qsize);
-    if (!ns) ERROR("open %s failed", vfioname);
+    ns = unvme_open(pciname, nsid, qcount, qsize);
+    if (!ns) ERROR("open %s failed", pciname);
     printf("blocks=%ld pagesize=%d maxppio=%d maxiopq=%d model=%s\n",
            ns->blockcount, ns->pagesize, ns->maxppio, ns->maxiopq, ns->model);
     last_lba = (ns->blockcount - ns->nbpp) & ~(u64)(ns->nbpp - 1);

@@ -104,30 +104,27 @@ unvme_page_t* unvme_poll(const unvme_ns_t* ns, unvme_page_t* pa, int sec)
     unvme_piocpq_t* piocpq = q->datapool.piocpq;
     int cid = pa->id;
 
-    // application processes completion
+    // check the already processed queue first
     unvme_page_t* p = unvme_cpq_get(piocpq, cid);
     if (p) return p;
 
-    if (sec == 0) {
-        p = unvme_check_cq(q);
-        if (!p) return NULL;
-        if (p->id == cid) return p;
-        unvme_cpq_put(piocpq, p);
-    } else {
-        u64 timeout = 0;
-        for (;;) {
+    // check to process all completion
+    unvme_page_t* ap;
+    while ((ap = unvme_check_cq(q))) {
+        if (ap->id == cid) p = ap;
+        else unvme_cpq_put(piocpq, ap);
+    }
+    if (p) return p;
+
+    if (sec > 0) {
+        u64 timeout = rdtsc() + sec * rdtsc_second();
+        do {
             if ((p = unvme_check_cq(q))) {
                 if (p->id == cid) return p;
                 unvme_cpq_put(piocpq, p);
-                continue;
             }
-            if (timeout == 0) {
-                timeout = rdtsc() + sec * rdtsc_second();
-            } else if (rdtsc() > timeout) {
-                //ERROR("timeout %d seconds", sec);
-                return NULL;
-            }
-        }
+        } while (rdtsc() < timeout);
+        //ERROR("timeout %d seconds", sec);
     }
 
     return NULL;
@@ -144,31 +141,33 @@ unvme_page_t* unvme_apoll(const unvme_ns_t* ns, int qid, int sec)
 {
     unvme_queue_t* q = ((unvme_session_t*)(ns->ses))->queues + qid;
     unvme_piocpq_t* piocpq = q->datapool.piocpq;
-    unvme_page_t* pa;
+    unvme_page_t* p = NULL;
 
-    // application processes completion
+    // check to get a page from the already processed queue first
     if (piocpq->count) {
-        pa = piocpq->pa[piocpq->head];
+        p = piocpq->pa[piocpq->head];
         if (++piocpq->head == piocpq->size) piocpq->head = 0;
         piocpq->count--;
-        return pa;
+        return p;
     }
 
-    if (sec == 0) {
-        pa = unvme_check_cq(q);
-    } else {
-        u64 timeout = 0;
-        while (!(pa = unvme_check_cq(q))) {
-            if (timeout == 0) {
-                timeout = rdtsc() + sec * rdtsc_second();
-            } else if (rdtsc() > timeout) {
-                //ERROR("timeout %d seconds", sec);
-                return NULL;
-            }
-        }
+    // check to process all completion
+    unvme_page_t* ap;
+    while ((ap = unvme_check_cq(q))) {
+        if (!p) p = ap;
+        else unvme_cpq_put(piocpq, ap);
+    }
+    if (p) return p;
+
+    if (sec > 0) {
+        u64 timeout = rdtsc() + sec * rdtsc_second();
+        do {
+            if ((p = unvme_check_cq(q))) return p;
+        } while (rdtsc() < timeout);
+        //ERROR("timeout %d seconds", sec);
     }
 
-    return pa;
+    return NULL;
 }
 
 /**

@@ -60,9 +60,9 @@ void unvme_datapool_alloc(unvme_queue_t* ioq)
     size_t statsize = ns->maxppq * sizeof(unvme_piostat_t);
     size_t cpqsize = sizeof(unvme_piocpq_t) + ioq->nvq->size * sizeof(unvme_page_t*);
 
-    DEBUG_FN("%d.%d", dev->vfiodev->id, ioq->nvq->id);
+    DEBUG_FN("%x.%d", dev->vfiodev->pci, ioq->nvq->id);
     char path[32];
-    sprintf(path, "/unvme.data.%d.%d.%d", dev->vfiodev->id, ioq->ses->id, ioq->nvq->id);
+    sprintf(path, "/unvme.data.%x.%d.%d", dev->vfiodev->pci, ioq->ses->id, ioq->nvq->id);
     datapool->sf = shm_create(path, datasize + statsize + cpqsize);
     if (!datapool->sf) FATAL();
     datapool->data = vfio_dma_map(dev->vfiodev, datasize, datapool->sf->buf);
@@ -85,7 +85,7 @@ void unvme_datapool_free(unvme_queue_t* ioq)
 {
     unvme_datapool_t* datapool = &ioq->datapool;
 
-    DEBUG_FN("%d.%d", ioq->ses->dev->vfiodev->id, ioq->ses->id, ioq->nvq->id);
+    DEBUG_FN("%x.%d", ioq->ses->dev->vfiodev->pci, ioq->ses->id, ioq->nvq->id);
     if (vfio_dma_free(datapool->prplist) ||
         vfio_dma_unmap(datapool->data) ||
         shm_delete(datapool->sf)) FATAL();
@@ -99,7 +99,7 @@ static void unvme_client_open(unvme_session_t* ses)
 {
     unvme_device_t* dev = ses->dev;
     unvme_msg_t* msg = ses->csif.msgbuf;
-    unvme_session_t* newses = unvme_do_open(dev, dev->vfiodev->id, msg->cpid,
+    unvme_session_t* newses = unvme_do_open(dev, dev->vfiodev->pci, msg->cpid,
                                             msg->nsid, msg->qcount, msg->qsize);
     if (newses) {
         msg->sid = newses->id;
@@ -165,7 +165,7 @@ static inline void unvme_client_rw(unvme_queue_t* ioq, unvme_msg_t* msg)
 static void unvme_csif_create(unvme_session_t* ses)
 {
     char path[32];
-    sprintf(path, "/unvme.csif.%d.%d", ses->dev->vfiodev->id, ses->id);
+    sprintf(path, "/unvme.csif.%x.%d", ses->dev->vfiodev->pci, ses->id);
     unvme_csif_t* csif = &ses->csif;
     csif->mqsize = ses->qcount + 1;
     csif->msglen = sizeof(unvme_msg_t) + sizeof(unvme_page_t) * ses->ns.maxppio;
@@ -233,7 +233,7 @@ static void* unvme_csif_thread(void* arg)
     unvme_csif_t* csif = &ses->csif;
     unvme_msg_t* msg = csif->msgbuf;
 
-    INFO_FN("%d: start ses=%d", ses->dev->vfiodev->id, ses->id);
+    INFO_FN("%x: start ses=%d", ses->dev->vfiodev->pci, ses->id);
     sem_post(&unvme_sem);
 
     if (ses->id == 0) {
@@ -281,7 +281,7 @@ static void* unvme_csif_thread(void* arg)
     }
 
 end:
-    INFO_FN("%d: end ses=%d", ses->dev->vfiodev->id, ses->id);
+    INFO_FN("%x: end ses=%d", ses->dev->vfiodev->pci, ses->id);
     return 0;
 }
 
@@ -292,7 +292,7 @@ end:
  */
 void unvme_session_create_ext(unvme_session_t* ses)
 {
-    unvme_tpc_create(ses);
+    if (ses->id > 0) unvme_tpc_create(ses);
     unvme_csif_create(ses);
 }
 
@@ -303,7 +303,7 @@ void unvme_session_create_ext(unvme_session_t* ses)
  */
 void unvme_session_delete_ext(unvme_session_t* ses)
 {
-    unvme_csif_delete(ses);
+    if (ses->id > 0) unvme_csif_delete(ses);
     unvme_tpc_delete(ses);
 }
 
@@ -323,9 +323,9 @@ static void unvme_sighandler(int sig)
  */
 int main(int argc, char* argv[])
 {
-    const char* usage = "Usage: %s [-f] vfioname...\n\
+    const char* usage = "Usage: %s [-f] pciname...\n\
          -f       run program in foreground\n\
-         vfioname vfio device name list\n";
+         pciname  PCI device name (as BB:DD.F format)\n";
 
     extern char* unvme_logname;
     char* prog = strrchr(argv[0], '/');
@@ -364,30 +364,32 @@ int main(int argc, char* argv[])
 
     // allocate and initialize each specified device
     unvme_device_t* dev = unvme_init(argc - optind);
-    int d;
-    for (d = 0; d < unvme_devcount; d++) {
-        int vfid;
-        if (sscanf(argv[optind + d], "/dev/vfio/%d", &vfid) != 1) {
-            FATAL("invalid vfio device name %s", argv[optind + d]);
+    int i;
+    for (i = 0; i < unvme_devcount; i++) {
+        char* pciname = argv[optind + i];
+        int b, d, f;
+        if (sscanf(pciname, "%02x:%02x.%1x", &b, &d, &f) != 3) {
+            FATAL("invalid PCI device %s (expect BB:DD.F format)", pciname);
         }
-        unvme_dev_init(dev + d, vfid);
+        int pci = (b << 16) + (d << 8) + f;
+        unvme_dev_init(dev + i, pci);
     }
 
     // loop and detect dead clients
-    for (d = 0; ;) {
+    for (i = 0; ;) {
         sleep(8);
-        pthread_spin_lock(&dev[d].lock);
-        unvme_session_t* ses = dev[d].ses->next;
-        while (ses != dev[d].ses) {
+        pthread_spin_lock(&dev[i].lock);
+        unvme_session_t* ses = dev[i].ses->next;
+        while (ses != dev[i].ses) {
             if (kill(ses->cpid, 0)) {
                 INFO("===\ndead client pid %d", ses->cpid);
-                unvme_do_close(&dev[d], ses->cpid, 0);
+                unvme_do_close(&dev[i], ses->cpid, 0);
                 break;
             }
             ses = ses->next;
         }
-        pthread_spin_unlock(&dev[d].lock);
-        if (++d == unvme_devcount) d = 0;
+        pthread_spin_unlock(&dev[i].lock);
+        if (++i == unvme_devcount) i = 0;
     }
 
     /* NOT REACHED */

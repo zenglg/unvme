@@ -8,7 +8,7 @@
 #   % unvme-benchmark spdk/05:00.0
 
 PROG=$(basename $0)
-USAGE="Usage: ${PROG} devname"
+USAGE="Usage: ${PROG} DEVICE_NAME"
 
 cd $(dirname $0)
 : ${OUTDIR=${PWD}/out}
@@ -55,27 +55,33 @@ for i in $@; do
         DRIVER="nvme"
         ;;
 
-    /dev/vfio/*)
-        if [ ! -c $i ]; then
-            echo "Unknown vfio device: $i"
+    [0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f].[0-9A-Fa-f])
+        if [ -z "$(lspci -n | grep $i\ 0108:)" ]; then
+            echo "Device $i is not SSD"
+            exit 1
+        fi
+        if [ ! -e /sys/bus/pci/drivers/vfio-pci/0000:$i ]; then
+            echo "Device $i is not UNVMe enabled"
             exit 1
         fi
         if [ -z ${IOENGINE} ]; then
             IOENGINE=../ioengine/unvme_fio
         fi
-        FILENAME=$i
+        FILENAME=$(echo $i | tr : .)
         DRIVER="unvme"
         ;;
 
-    spdk/*:*.*)
-        IOENGINE=../ioengine/spdk_fio
-        DRIVER="spdk"
-        pci=$(basename $i)
-        if [ -z "$(lspci | grep ^${pci} | grep 'Non-Volatile')" ]; then
-            echo "No SSD at PCI ${pci}"
+    spdk/[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f].[0-9A-Fa-f])
+        i=$(basename $i)
+        if [ -z "$(lspci -n | grep $i\ 0108:)" ]; then
+            echo "Device $i is not SSD"
             exit 1
         fi
-        FILENAME=$(echo ${pci} | tr : .)
+        if [ -z ${IOENGINE} ]; then
+            IOENGINE=../ioengine/spdk_fio
+        fi
+        FILENAME=$(echo $i | tr : .)
+        DRIVER="spdk"
         shift
         ;;
 

@@ -52,7 +52,7 @@ void* unvme_tpc_thread(void* arg)
     int qcount = ses->qcount;
     int toqid = ioqs[qcount-1].nvq->id;
 
-    INFO_FN("%d: start q=%d-%d", dev->vfiodev->id, ses->id, toqid);
+    INFO_FN("%x: start q=%d-%d", dev->vfiodev->pci, ses->id, toqid);
     sem_post(&unvme_sem);
 
     while (sem_wait(&ses->tpc.sem) == 0) {
@@ -74,7 +74,7 @@ void* unvme_tpc_thread(void* arg)
     }
 
 end:
-    INFO_FN("%d: end q=%d-%d", dev->vfiodev->id, ses->id, toqid);
+    INFO_FN("%x: end q=%d-%d", dev->vfiodev->pci, ses->id, toqid);
     return 0;
 }
 
