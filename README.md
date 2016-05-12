@@ -67,7 +67,7 @@ UNVMe requires the following hardware and software support:
                     CONFIG_VFIO_IOMMU_TYPE1=m
                     CONFIG_INTEL_IOMMU_DEFAULT_ON=y
 
-                If CONFIG_INTEL_IOMMU_DEFAULT_ON is set to 'm' then the boot
+                If CONFIG_INTEL_IOMMU_DEFAULT_ON is not set then the boot
                 command line must set the "intel_iommu=on" argument.  To
                 support both UNVMe and SPDK, set also the "iommu=pt" parameter.
 

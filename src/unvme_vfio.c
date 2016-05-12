@@ -249,7 +249,7 @@ static int vfio_mem_free(vfio_mem_t* mem)
  */
 int vfio_msix_enable(vfio_device_t* vdev, int start, int count, __s32* efds)
 {
-    vfio_dev_t* dev = (vfio_dev_t*) dev;
+    vfio_dev_t* dev = (vfio_dev_t*)vdev;
     DEBUG_FN("%x: start=%d count=%d", dev->pci, start, count);
 
     if (dev->msix_size == 0) {
@@ -294,7 +294,7 @@ int vfio_msix_enable(vfio_device_t* vdev, int start, int count, __s32* efds)
  */
 int vfio_msix_disable(vfio_device_t* vdev)
 {
-    vfio_dev_t* dev = (vfio_dev_t*) dev;
+    vfio_dev_t* dev = (vfio_dev_t*)vdev;
     if (dev->msix_nvec == 0) return 0;
 
     struct vfio_irq_set irq_set = {
