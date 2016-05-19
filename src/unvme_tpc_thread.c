@@ -50,7 +50,7 @@ void* unvme_tpc_thread(void* arg)
     unvme_device_t* dev = ses->dev;
     unvme_queue_t* ioqs = ses->queues;
     int qcount = ses->qcount;
-    int toqid = ioqs[qcount-1].nvq->id;
+    int toqid = ioqs[qcount-1].id;
 
     INFO_FN("%x: start q=%d-%d", dev->vfiodev->pci, ses->id, toqid);
     sem_post(&unvme_sem);

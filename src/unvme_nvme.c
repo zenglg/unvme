@@ -477,7 +477,7 @@ nvme_queue_t* nvme_create_ioq(nvme_device_t* dev, int id, int qsize,
     ioq->sq_doorbell = dev->reg->sq0tdbl + (2 * id * dev->dbstride);
     ioq->cq_doorbell = ioq->sq_doorbell + dev->dbstride;
 
-    if (nvme_acmd_create_cq(ioq, cqpa, ien) | nvme_acmd_create_sq(ioq, sqpa)) {
+    if (nvme_acmd_create_cq(ioq, cqpa, ien) || nvme_acmd_create_sq(ioq, sqpa)) {
         free(ioq);
         return NULL;
     }
@@ -491,7 +491,7 @@ nvme_queue_t* nvme_create_ioq(nvme_device_t* dev, int id, int qsize,
  */
 int nvme_delete_ioq(nvme_queue_t* ioq)
 {
-    if (nvme_acmd_delete_sq(ioq) | nvme_acmd_delete_cq(ioq)) return -1;
+    if (nvme_acmd_delete_sq(ioq) || nvme_acmd_delete_cq(ioq)) return -1;
     free(ioq);
     return 0;
 }

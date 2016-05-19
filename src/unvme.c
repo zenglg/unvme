@@ -116,24 +116,22 @@ static void unvme_ns_init(unvme_session_t* ses, int nsid)
 static void unvme_ioq_create(unvme_session_t* ses, int sqi)
 {
     unvme_device_t* dev = ses->dev;
-    DEBUG_FN("%x: qs=%d", dev->vfiodev->pci, ses->qsize);
-
     unvme_queue_t* ioq = &ses->queues[sqi];
     ioq->ses = ses;
-    int nvqid = (sqi == 0 ? ses->prev->queues[ses->prev->qcount-1].nvq->id
-                          : ioq[-1].nvq->id) + 1;
-    if (nvqid == 0) FATAL("qid wraps to 0");
-    if (ses->id == 0) {
-        ses->id = nvqid;
-        ses->ns.sid = nvqid;
+
+    if (sqi == 0) {
+        ses->id = ses->prev->queues[ses->prev->qcount-1].id + 1;
+        ses->ns.sid = ses->id;
     }
+    ioq->id = ses->id + sqi;
+    DEBUG_FN("%x: q=%d qs=%d", dev->vfiodev->pci, ioq->id, ses->qsize);
 
     ioq->sqdma = vfio_dma_alloc(dev->vfiodev, ses->qsize * sizeof(nvme_sq_entry_t));
     if (!ioq->sqdma) FATAL();
     ioq->cqdma = vfio_dma_alloc(dev->vfiodev, ses->qsize * sizeof(nvme_cq_entry_t));
     if (!ioq->cqdma) FATAL();
 
-    ioq->nvq = nvme_create_ioq(dev->nvmedev, nvqid, ses->qsize,
+    ioq->nvq = nvme_create_ioq(dev->nvmedev, ioq->id, ses->qsize,
                                ioq->sqdma->buf, ioq->sqdma->addr,
                                ioq->cqdma->buf, ioq->cqdma->addr, 0);
     if (!ioq->nvq) FATAL();
@@ -153,13 +151,12 @@ static void unvme_ioq_delete(unvme_queue_t* ioq)
 {
     unvme_session_t* ses = ioq->ses;
 
-    DEBUG_FN("%x: q=%d", ses->dev->vfiodev->pci, ioq->nvq->id);
-    if (nvme_delete_ioq(ioq->nvq) ||
-        vfio_dma_free(ioq->cqdma) || vfio_dma_free(ioq->sqdma)) FATAL();
-
+    DEBUG_FN("%x: q=%d", ses->dev->vfiodev->pci, ioq->id);
+    if (ioq->nvq && nvme_delete_ioq(ioq->nvq)) FATAL();
+    if (ioq->cqdma && vfio_dma_free(ioq->cqdma)) FATAL();
+    if (ioq->sqdma && vfio_dma_free(ioq->sqdma)) FATAL();
     unvme_datapool_free(ioq);
     ses->dev->numioqs--;
-    INFO_FN("%x: q=%d qc=%d", ses->dev->vfiodev->pci, ioq->nvq->id, ses->dev->numioqs);
 }
 
 /**
@@ -236,7 +233,7 @@ static unvme_session_t* unvme_session_create(unvme_device_t* dev, int cpid,
         int i;
         for (i = 0; i < qcount; i++) unvme_ioq_create(ses, i);
         DEBUG_FN("%x: q=%d-%d bs=%d nb=%lu", dev->vfiodev->pci,
-                 ses->id, ses->queues[qcount-1].nvq->id,
+                 ses->id, ses->queues[qcount-1].id,
                  ses->ns.blocksize, ses->ns.blockcount);
     }
 
@@ -259,8 +256,11 @@ static void unvme_session_delete(unvme_session_t* ses)
         dev->ses = NULL;
     } else {
         DEBUG_FN("%x: q=%d-%d", dev->vfiodev->pci, ses->id,
-                                ses->queues[ses->qcount-1].nvq->id);
-        while (--ses->qcount >= 0) unvme_ioq_delete(&ses->queues[ses->qcount]);
+                                ses->id + ses->qcount -1);
+        while (--ses->qcount >= 0) {
+            unvme_queue_t* ioq = &ses->queues[ses->qcount];
+            if (ioq->ses) unvme_ioq_delete(ioq);
+        }
         ses->next->prev = ses->prev;
         ses->prev->next = ses->next;
     }
@@ -386,7 +386,7 @@ int unvme_do_close(unvme_device_t* dev, pid_t cpid, int sid)
         }
     }
     ses = dev->ses->prev;
-    INFO_FN("%x: last qid %d", dev->vfiodev->pci, ses->queues[ses->qcount-1].nvq->id);
+    INFO_FN("%x: last qid %d", dev->vfiodev->pci, ses->queues[ses->qcount-1].id);
     if (unvme_model != UNVME_MODEL_CS && ses == ses->next) unvme_cleanup();
     return 0;
 }
@@ -409,7 +409,7 @@ int unvme_do_alloc(unvme_queue_t* ioq)
         }
         if (++id == ioq->ses->ns.maxppq) id = 0;
     } while (id != datapool->nextsi);
-    ERROR("q=%d out of pages", ioq->nvq->id);
+    ERROR("q=%d out of pages", ioq->id);
     return -1;
 }
 

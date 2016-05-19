@@ -34,7 +34,9 @@
  * @brief UNVMe client library common functions.
  */
 
+#include <stddef.h>
 #include "unvme.h"
+
 
 /// Global client info
 unvme_client_t  client = {  .lock = PTHREAD_MUTEX_INITIALIZER,
@@ -112,7 +114,6 @@ unvme_page_t* unvme_alloc(const unvme_ns_t* ns, int qid, int numpages)
     // allocate the page array
     unvme_pal_t* pal = zalloc(sizeof(unvme_pal_t) +
                                numpages * sizeof(unvme_page_t));
-    pal->pa = (unvme_page_t*)(pal + 1);
     pal->count = numpages;
     pal->pa->qid = qid;
 
@@ -145,7 +146,7 @@ unvme_page_t* unvme_alloc(const unvme_ns_t* ns, int qid, int numpages)
 int unvme_free(const unvme_ns_t* ns, unvme_page_t* pa)
 {
     unvme_queue_t* ioq = ((unvme_session_t*)(ns->ses))->queues + pa->qid;
-    unvme_pal_t* pal = (unvme_pal_t*)pa - 1;
+    unvme_pal_t* pal = (unvme_pal_t*)((void*)pa - offsetof(unvme_pal_t, pa));
     if (!ioq->pal || pal->pa != pa || client_free(ns, pal)) return -1;
 
     // remove from the page allocation entry

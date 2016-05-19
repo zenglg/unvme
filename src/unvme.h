@@ -143,7 +143,7 @@ typedef struct _unvme_piocpq {
     int                     count;      ///< completion count
     int                     head;       ///< completion queue head
     int                     tail;       ///< completion queue tail
-    unvme_page_t*           pa[0];      ///< array of completion page pointers
+    unvme_page_t*           pa[];       ///< array of completion page pointers
 } unvme_piocpq_t;
 
 /// page I/O status tracking
@@ -165,10 +165,10 @@ typedef struct _unvme_datapool {
 
 /// client page array allocation
 typedef struct _unvme_pal {
-    unvme_page_t*           pa;         ///< page array
-    int                     count;      ///< number of pages
     struct _unvme_pal*      prev;       ///< previous allocated node
     struct _unvme_pal*      next;       ///< next allocated node
+    int                     count;      ///< number of pages
+    unvme_page_t            pa[];       ///< page array
 } unvme_pal_t;
 
 struct _unvme_session;
@@ -181,6 +181,7 @@ typedef struct _unvme_queue {
     vfio_dma_t*             sqdma;      ///< submission queue allocation
     vfio_dma_t*             cqdma;      ///< completion queue allocation
     unvme_datapool_t        datapool;   ///< queue associated data pool
+    int                     id;         ///< NVMe queue id upon successful
     int                     pac;        ///< client page allocation count
     unvme_pal_t*            pal;        ///< client page allocation list
 } unvme_queue_t;

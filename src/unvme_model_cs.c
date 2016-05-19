@@ -60,9 +60,9 @@ void unvme_datapool_alloc(unvme_queue_t* ioq)
     size_t statsize = ns->maxppq * sizeof(unvme_piostat_t);
     size_t cpqsize = sizeof(unvme_piocpq_t) + ioq->nvq->size * sizeof(unvme_page_t*);
 
-    DEBUG_FN("%x.%d", dev->vfiodev->pci, ioq->nvq->id);
+    DEBUG_FN("%x.%d", dev->vfiodev->pci, ioq->id);
     char path[32];
-    sprintf(path, "/unvme.data.%x.%d.%d", dev->vfiodev->pci, ioq->ses->id, ioq->nvq->id);
+    sprintf(path, "/unvme.data.%x.%d.%d", dev->vfiodev->pci, ioq->ses->id, ioq->id);
     datapool->sf = shm_create(path, datasize + statsize + cpqsize);
     if (!datapool->sf) FATAL();
     datapool->data = vfio_dma_map(dev->vfiodev, datasize, datapool->sf->buf);
@@ -85,7 +85,7 @@ void unvme_datapool_free(unvme_queue_t* ioq)
 {
     unvme_datapool_t* datapool = &ioq->datapool;
 
-    DEBUG_FN("%x.%d", ioq->ses->dev->vfiodev->pci, ioq->ses->id, ioq->nvq->id);
+    DEBUG_FN("%x.%d", ioq->ses->dev->vfiodev->pci, ioq->ses->id, ioq->id);
     if (vfio_dma_free(datapool->prplist) ||
         vfio_dma_unmap(datapool->data) ||
         shm_delete(datapool->sf)) FATAL();

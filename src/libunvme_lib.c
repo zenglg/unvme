@@ -46,18 +46,17 @@ void unvme_datapool_alloc(unvme_queue_t* ioq)
 {
     unvme_device_t* dev = ioq->ses->dev;
     unvme_ns_t* ns = &ioq->ses->ns;
-    int qsize = ioq->nvq->size;
     size_t datasize = ns->maxppq * ns->pagesize;
     size_t statsize = ns->maxppq * sizeof(unvme_piostat_t);
-    size_t cpqsize = sizeof(unvme_piocpq_t) + qsize * sizeof(unvme_page_t*);
+    size_t cpqsize = sizeof(unvme_piocpq_t) + ioq->nvq->size * sizeof(unvme_page_t*);
 
-    DEBUG_FN("%x.%d", dev->vfiodev->pci, ioq->nvq->id);
+    DEBUG_FN("%x.%d", dev->vfiodev->pci, ioq->id);
     unvme_datapool_t* datapool = &ioq->datapool;
     datapool->data = vfio_dma_alloc(dev->vfiodev, datasize);
     if (!datapool->data) FATAL();
     datapool->piostat = zalloc(statsize + cpqsize);
     datapool->piocpq = (void*)(datapool->piostat) + statsize;
-    datapool->piocpq->size = qsize;
+    datapool->piocpq->size = ioq->nvq->size;
 
     // also allocate PRP list for large IO transfer
     size_t prplistsize = ns->maxppq * ns->pagesize;
@@ -71,10 +70,10 @@ void unvme_datapool_alloc(unvme_queue_t* ioq)
  */
 void unvme_datapool_free(unvme_queue_t* ioq)
 {
-    DEBUG_FN("%x.%d", ioq->ses->dev->vfiodev->pci, ioq->nvq->id);
-    if (vfio_dma_free(ioq->datapool.prplist) ||
-        vfio_dma_free(ioq->datapool.data)) FATAL();
-    free(ioq->datapool.piostat);
+    DEBUG_FN("%x.%d", ioq->ses->dev->vfiodev->pci, ioq->id);
+    if (ioq->datapool.prplist && vfio_dma_free(ioq->datapool.prplist)) FATAL();
+    if (ioq->datapool.data && vfio_dma_free(ioq->datapool.data)) FATAL();
+    if (ioq->datapool.piostat) free(ioq->datapool.piostat);
 }
 
 /**
